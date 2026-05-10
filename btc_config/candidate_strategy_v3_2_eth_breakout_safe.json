@@ -1,0 +1,38 @@
+{
+  "name": "leiting_v3_2_eth_breakout_safe_demo",
+  "engine_mode": "v3_simple",
+  "symbols": [
+    "ETHUSDT"
+  ],
+  "interval": "5m",
+  "allow_long": true,
+  "allow_short": true,
+  "threshold": 0.38,
+  "ema_fast_bars": 9,
+  "ema_slow_bars": 21,
+  "breakout_lookback_bars": 20,
+  "min_ema_gap_pct": 0.12,
+  "require_breakout_confirmation": true,
+  "require_flow_confirmation": true,
+  "min_taker_buy_ratio_long": 1.05,
+  "max_taker_buy_ratio_short": 0.95,
+  "min_aggressive_flow_delta_long": 30.0,
+  "max_aggressive_flow_delta_short": -30.0,
+  "min_depth_imbalance_long": 0.08,
+  "max_depth_imbalance_short": -0.08,
+  "min_execution_quality_score": 8.0,
+  "max_spread_bps": 0.9,
+  "max_estimated_slippage_bps": 1.2,
+  "take_profit_net_roi_pct": 10.0,
+  "hard_stop_net_roi_pct": 5.0,
+  "estimated_fee_bps_per_side": 5.0,
+  "enable_breakeven": false,
+  "enable_trailing": false,
+  "notes": [
+    "ETH 单标的，先停 BTC",
+    "只保留 breakout + flow 同时确认的入场",
+    "提高阈值，拉长 breakout lookback，减少 5m 噪音开仓",
+    "20x 安全暂存版本，保持自动开单暂停状态",
+    "后续 journal 会保留 entry_signal / entry_market / plan 供复盘"
+  ]
+}

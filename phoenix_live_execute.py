@@ -23,6 +23,7 @@ from phoenix.guardian_launch import spawn_guardian_worker
 from phoenix.hermes_notify import humanize_side, send_telegram_message_async, telegram_settings
 from phoenix.models import OrderInstruction, TradeIntent
 from phoenix.runtime_state import evaluate_cooldown_gate, summarize_candidate
+from phoenix.safe_order_gateway import build_gateway_snapshot, submit_binance_order_intent, submit_order_intent
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -160,10 +161,106 @@ def find_instruction(plan: list[OrderInstruction], name: str) -> OrderInstructio
     raise RuntimeError(f"Missing required order instruction: {name}")
 
 
-async def place_instruction(futures: BinanceFuturesClient, instruction: OrderInstruction) -> dict[str, object]:
-    if "/conditional/" in instruction.endpoint or instruction.endpoint.endswith("/algoOrder"):
-        return await futures.new_conditional_order(instruction.payload)
-    return await futures.new_order(instruction.payload)
+def find_instruction_optional(plan: list[OrderInstruction], name: str) -> OrderInstruction | None:
+    for item in plan:
+        if item.name == name:
+            return item
+    return None
+
+
+async def place_instruction(
+    futures: BinanceFuturesClient,
+    instruction: OrderInstruction,
+    *,
+    environment_name: str | None = None,
+    runtime_mode: str | None = None,
+    intent_log_path: str | Path | None = None,
+    intent: TradeIntent | None = None,
+    purpose: str | None = None,
+    snapshot: dict[str, object] | None = None,
+) -> dict[str, object]:
+    env_name = _gateway_env_name(futures, environment_name)
+    resolved_purpose = purpose or _purpose_from_instruction(instruction)
+    payload = dict(instruction.payload)
+    gateway_snapshot = snapshot or _snapshot_for_instruction(
+        payload,
+        purpose=resolved_purpose,
+        intent=intent,
+    )
+    return await submit_binance_order_intent(
+        futures,
+        payload,
+        snapshot=gateway_snapshot,
+        environment=_gateway_environment(env_name, runtime_mode),
+        source="phoenix_live_execute",
+        purpose=resolved_purpose,
+        endpoint=instruction.endpoint,
+        order_intent=intent,
+        dry_run=False,
+        audit_log_path=intent_log_path,
+        extra_context={
+            "instruction_name": instruction.name,
+            "protective_stop_path_available": True,
+            "emergency_close_path_available": True,
+        },
+    )
+
+
+def _gateway_env_name(futures: BinanceFuturesClient, environment_name: str | None = None) -> str:
+    if environment_name:
+        return str(environment_name).strip().lower()
+    environment = getattr(futures, "environment", None)
+    return str(getattr(environment, "name", None) or os.environ.get("PHOENIX_BINANCE_ENV") or "testnet").strip().lower()
+
+
+def _gateway_environment(environment_name: str, runtime_mode: str | None = None) -> dict[str, object]:
+    return {
+        "runtime_mode": runtime_mode or os.environ.get("PHOENIX_RUNTIME_MODE") or "TESTNET_LIVE",
+        "env": environment_name,
+    }
+
+
+def _purpose_from_instruction(instruction: OrderInstruction) -> str:
+    name = instruction.name.lower()
+    if "entry" in name:
+        return "entry"
+    if "take_profit" in name:
+        return "take_profit"
+    if "stop" in name or "protection" in name:
+        return "protection"
+    return "order"
+
+
+def _snapshot_for_instruction(
+    payload: dict[str, object],
+    *,
+    purpose: str,
+    intent: TradeIntent | None,
+) -> dict[str, object]:
+    symbol = str(payload.get("symbol") or (intent.symbol if intent is not None else "") or "UNKNOWN").upper()
+    side = str(payload.get("side") or (intent.side if intent is not None else "") or "").upper()
+    reduce_like = str(payload.get("reduceOnly") or "").lower() == "true" or str(payload.get("closePosition") or "").lower() == "true"
+    positions = []
+    if reduce_like or purpose in {"protection", "take_profit", "exit", "emergency"}:
+        positions.append(
+            {
+                "symbol": symbol,
+                "side": "LONG" if side == "SELL" else "SHORT",
+                "protection_status": "healthy",
+            }
+        )
+    return build_gateway_snapshot(
+        symbol=symbol,
+        side=side,
+        positions=positions,
+        data_fresh=True,
+        websocket_status="healthy",
+        exchange_status="healthy",
+        position_state="known",
+        stop_protection_status="healthy",
+        protective_stop_path_available=True,
+        emergency_close_available=True,
+    )
 
 
 def spawn_post_fill_worker(
@@ -385,18 +482,68 @@ async def async_main() -> int:
             result["plan"] = [item.to_dict() for item in plan]
 
             entry_instruction = find_instruction(plan, "entry_market")
-            protective_stop = find_instruction(plan, "initial_protective_stop")
+            protective_stop = find_instruction_optional(plan, "initial_protective_stop")
+            risk_log_path = guardian_workers_dir() / "phoenix_order_intents.jsonl"
+            entry_snapshot = build_gateway_snapshot(
+                symbol=intent.symbol,
+                side=intent.side,
+                candidate=summarize_candidate(candidate) if candidate is not None else None,
+                positions=[],
+                open_positions_count=len(open_symbols),
+                max_open_positions=settings.max_open_positions,
+                data_fresh=True,
+                websocket_status="healthy",
+                exchange_status="healthy",
+                position_state="known",
+                stop_protection_status="healthy",
+                protective_stop_path_available=protective_stop is not None,
+                emergency_close_available=True,
+            )
+            entry_risk_gateway = await submit_order_intent(
+                intent,
+                entry_snapshot,
+                _gateway_environment(environment.name),
+                "phoenix_live_execute:entry_preflight",
+                dry_run=True,
+                audit_log_path=risk_log_path,
+                extra_context={
+                    "protective_stop_path_available": protective_stop is not None,
+                    "emergency_close_path_available": True,
+                },
+            )
+            result["risk_governor_result"] = entry_risk_gateway.risk_governor_result
+            if not entry_risk_gateway.approved:
+                raise RuntimeError(
+                    "Risk Governor blocked entry before exchange call: "
+                    f"{entry_risk_gateway.reason}"
+                )
             remaining = [
                 item
                 for item in plan
                 if item.name not in {"entry_market", "initial_protective_stop"}
             ]
 
-            entry_response = await place_instruction(futures, entry_instruction)
+            entry_response = await place_instruction(
+                futures,
+                entry_instruction,
+                environment_name=environment.name,
+                intent_log_path=risk_log_path,
+                intent=intent,
+                purpose="entry",
+                snapshot=entry_snapshot,
+            )
             result["entry_market"] = {"ok": True, "payload": entry_response}
 
             try:
-                stop_response = await place_instruction(futures, protective_stop)
+                stop_response = await place_instruction(
+                    futures,
+                    protective_stop,
+                    environment_name=environment.name,
+                    intent_log_path=risk_log_path,
+                    intent=intent,
+                    purpose="protection",
+                    snapshot=_snapshot_for_instruction(protective_stop.payload, purpose="protection", intent=intent),
+                )
                 result["initial_protective_stop"] = {"ok": True, "payload": stop_response}
             except Exception as exc:  # noqa: BLE001
                 exit_side = "SELL" if intent.side == "BUY" else "BUY"
@@ -414,7 +561,21 @@ async def async_main() -> int:
                 emergency_close = None
                 emergency_error = None
                 try:
-                    emergency_close = await futures.new_order(emergency_payload)
+                    emergency_close = await submit_binance_order_intent(
+                        futures,
+                        emergency_payload,
+                        snapshot=_snapshot_for_instruction(emergency_payload, purpose="emergency", intent=intent),
+                        environment=_gateway_environment(environment.name),
+                        source="phoenix_live_execute:emergency_close",
+                        purpose="emergency",
+                        order_intent=intent,
+                        dry_run=False,
+                        audit_log_path=risk_log_path,
+                        extra_context={
+                            "protective_stop_path_available": True,
+                            "emergency_close_path_available": True,
+                        },
+                    )
                 except Exception as close_exc:  # noqa: BLE001
                     emergency_error = str(close_exc)
                 result["initial_protective_stop"] = {"ok": False, "error": str(exc)}

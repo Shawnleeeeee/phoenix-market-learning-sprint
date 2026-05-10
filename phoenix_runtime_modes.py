@@ -130,7 +130,7 @@ def default_binance_env_for_mode(runtime_mode: str | None) -> str:
 
 
 def permits_real_mainnet_orders(runtime_mode: str | None) -> bool:
-    return normalize_runtime_mode(runtime_mode) == MAINNET_LIVE
+    return False
 
 
 def assert_runtime_mode_safe(
@@ -149,11 +149,8 @@ def assert_runtime_mode_safe(
         raise RuntimeModeSafetyError("MAINNET_SHADOW must read the mainnet/prod environment.")
 
     if mode == MAINNET_LIVE:
-        if env not in _MAINNET_ENVS:
-            raise RuntimeModeSafetyError("MAINNET_LIVE must run against a mainnet/prod Binance environment.")
-        if not enable_mainnet_live:
-            raise RuntimeModeSafetyError(
-                "MAINNET_LIVE requires PHOENIX_ENABLE_MAINNET_LIVE=true and is never enabled by default."
-            )
+        raise RuntimeModeSafetyError(
+            "MAINNET_LIVE is hard blocked in Phoenix Trader Mode; Shawn manual approval and a separate release are required."
+        )
 
     return mode

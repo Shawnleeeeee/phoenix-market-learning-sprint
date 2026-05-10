@@ -16,6 +16,7 @@ from phoenix.config import load_credentials, load_proxy_settings
 from phoenix.executor import PhoenixExecutor, ProtectionState
 from phoenix.hermes_notify import humanize_side, send_telegram_message_async, telegram_settings
 from phoenix.models import OrderInstruction, TradeIntent
+from phoenix.safe_order_gateway import build_gateway_snapshot, submit_binance_order_intent
 
 DEFAULT_SETTLEMENT_RETRY_DELAYS_SEC = (0.0, 1.0, 2.0, 4.0, 8.0)
 REAL_TRADE_OUTCOMES_FILENAME = "phoenix_real_trade_outcomes.jsonl"
@@ -125,10 +126,49 @@ def find_instruction(items: list[OrderInstruction], name: str) -> OrderInstructi
     raise RuntimeError(f"Missing required post-fill instruction: {name}")
 
 
-async def place_instruction(futures: BinanceFuturesClient, instruction: OrderInstruction) -> dict[str, Any]:
-    if "/conditional/" in instruction.endpoint or instruction.endpoint.endswith("/algoOrder"):
-        return await futures.new_conditional_order(instruction.payload)
-    return await futures.new_order(instruction.payload)
+async def place_instruction(
+    futures: BinanceFuturesClient,
+    instruction: OrderInstruction,
+    *,
+    environment_name: str | None = None,
+    intent_log_path: str | Path | None = None,
+    intent: TradeIntent | None = None,
+) -> dict[str, Any]:
+    payload = dict(instruction.payload)
+    symbol = str(payload.get("symbol") or (intent.symbol if intent is not None else "") or "UNKNOWN").upper()
+    side = str(payload.get("side") or "").upper()
+    snapshot = build_gateway_snapshot(
+        symbol=symbol,
+        side=side,
+        positions=[{"symbol": symbol, "side": "LONG" if side == "SELL" else "SHORT", "protection_status": "healthy"}],
+        data_fresh=True,
+        websocket_status="healthy",
+        exchange_status="healthy",
+        position_state="known",
+        stop_protection_status="healthy",
+        protective_stop_path_available=True,
+        emergency_close_available=True,
+    )
+    return await submit_binance_order_intent(
+        futures,
+        payload,
+        snapshot=snapshot,
+        environment={
+            "runtime_mode": os.environ.get("PHOENIX_RUNTIME_MODE") or "TESTNET_LIVE",
+            "env": environment_name or getattr(getattr(futures, "environment", None), "name", None) or "testnet",
+        },
+        source="phoenix_post_fill_worker",
+        purpose="protection",
+        endpoint=instruction.endpoint,
+        order_intent=intent,
+        dry_run=False,
+        audit_log_path=intent_log_path,
+        extra_context={
+            "instruction_name": instruction.name,
+            "protective_stop_path_available": True,
+            "emergency_close_path_available": True,
+        },
+    )
 
 
 def build_runtime_trailing_instruction(
@@ -296,6 +336,10 @@ async def cancel_conditional_order_payload(
 async def ensure_unique_protection_order(
     futures: BinanceFuturesClient,
     instruction: OrderInstruction,
+    *,
+    environment_name: str | None = None,
+    intent_log_path: str | Path | None = None,
+    intent: TradeIntent | None = None,
 ) -> dict[str, Any]:
     symbol = str(instruction.payload.get("symbol") or "").upper()
     existing_orders = await futures.open_conditional_orders(symbol)
@@ -323,7 +367,13 @@ async def ensure_unique_protection_order(
             "cancel_results": cancel_results,
         }
 
-    placed_order = await place_instruction(futures, instruction)
+    placed_order = await place_instruction(
+        futures,
+        instruction,
+        environment_name=environment_name,
+        intent_log_path=intent_log_path,
+        intent=intent,
+    )
     return {
         "action": "replaced" if matching_orders else "placed",
         "order": placed_order,
@@ -832,6 +882,7 @@ async def async_main() -> int:
         state = executor.build_protection_state(intent)
         notification_settings = telegram_settings()
         account_api_mode = str(job.get("account_api_mode") or futures.planned_account_api_mode())
+        order_intent_log_path = hermes_home() / "memories" / "phoenix_order_intents.jsonl"
 
         if account_api_mode == "portfolio_margin":
             try:
@@ -943,7 +994,13 @@ async def async_main() -> int:
                 if action is not None and state.phase == "BREAKEVEN_LOCKED":
                     breakeven_instruction = find_instruction(remaining_plan, "breakeven_stop_replacement")
                     trailing_instruction = find_instruction(remaining_plan, "post_trigger_trailing_stop")
-                    breakeven_reconcile = await ensure_unique_protection_order(futures, breakeven_instruction)
+                    breakeven_reconcile = await ensure_unique_protection_order(
+                        futures,
+                        breakeven_instruction,
+                        environment_name=credentials.environment.name,
+                        intent_log_path=order_intent_log_path,
+                        intent=intent,
+                    )
                     breakeven_response = breakeven_reconcile["order"]
                     runtime_trailing_instruction = build_runtime_trailing_instruction(
                         trailing_instruction,
@@ -972,7 +1029,13 @@ async def async_main() -> int:
                     write_job(job_path, job)
 
                     try:
-                        trailing_reconcile = await ensure_unique_protection_order(futures, runtime_trailing_instruction)
+                        trailing_reconcile = await ensure_unique_protection_order(
+                            futures,
+                            runtime_trailing_instruction,
+                            environment_name=credentials.environment.name,
+                            intent_log_path=order_intent_log_path,
+                            intent=intent,
+                        )
                     except (BinanceAPIError, RuntimeError, ValueError) as exc:
                         append_event(
                             job,
@@ -1021,7 +1084,13 @@ async def async_main() -> int:
                         mark_price=mark_price,
                     )
                     try:
-                        trailing_reconcile = await ensure_unique_protection_order(futures, runtime_trailing_instruction)
+                        trailing_reconcile = await ensure_unique_protection_order(
+                            futures,
+                            runtime_trailing_instruction,
+                            environment_name=credentials.environment.name,
+                            intent_log_path=order_intent_log_path,
+                            intent=intent,
+                        )
                     except (BinanceAPIError, RuntimeError, ValueError) as exc:
                         append_event(
                             job,

@@ -18,14 +18,12 @@ class PhoenixRuntimeModeTests(unittest.TestCase):
         self.assertEqual(normalize_runtime_mode("shadow"), MAINNET_SHADOW)
         self.assertEqual(normalize_runtime_mode("mainnet"), MAINNET_LIVE)
 
-    def test_mainnet_live_requires_explicit_enable_flag(self) -> None:
+    def test_mainnet_live_is_hard_blocked_even_with_enable_flag(self) -> None:
         with self.assertRaises(RuntimeModeSafetyError):
             assert_runtime_mode_safe(MAINNET_LIVE, binance_env="prod")
 
-        self.assertEqual(
-            assert_runtime_mode_safe(MAINNET_LIVE, binance_env="prod", enable_mainnet_live=True),
-            MAINNET_LIVE,
-        )
+        with self.assertRaises(RuntimeModeSafetyError):
+            assert_runtime_mode_safe(MAINNET_LIVE, binance_env="prod", enable_mainnet_live=True)
 
     def test_mainnet_live_requires_mainnet_environment(self) -> None:
         with self.assertRaises(RuntimeModeSafetyError):
@@ -55,16 +53,15 @@ class PhoenixConfigTests(unittest.TestCase):
                 }
             )
 
-    def test_explicit_mainnet_live_requires_both_mode_and_enable_flag(self) -> None:
-        config = load_phoenix_config(
-            {
-                "PHOENIX_RUNTIME_MODE": MAINNET_LIVE,
-                "PHOENIX_BINANCE_ENV": "prod",
-                "PHOENIX_ENABLE_MAINNET_LIVE": "true",
-            }
-        )
-
-        self.assertTrue(config.mainnet_live_orders_enabled)
+    def test_explicit_mainnet_live_flag_still_cannot_enable_orders(self) -> None:
+        with self.assertRaises(RuntimeModeSafetyError):
+            load_phoenix_config(
+                {
+                    "PHOENIX_RUNTIME_MODE": MAINNET_LIVE,
+                    "PHOENIX_BINANCE_ENV": "prod",
+                    "PHOENIX_ENABLE_MAINNET_LIVE": "true",
+                }
+            )
 
     def test_secrets_are_redacted_from_config_snapshot(self) -> None:
         config = load_phoenix_config({"OPENAI_API_KEY": "sk-test-secret-value"})

@@ -1,0 +1,20 @@
+{
+  "trending": [
+    {"symbol": "BTCUSDT"},
+    {"symbol": "ETHUSDT"},
+    {"symbol": "SOLUSDT"}
+  ],
+  "top_search": [
+    {"symbol": "BTCUSDT"},
+    {"symbol": "PEPEUSDT"},
+    {"symbol": "DOGEUSDT"}
+  ],
+  "alpha": [
+    {"symbol": "SIRENUSDT"},
+    {"symbol": "RAVEUSDT"}
+  ],
+  "smart_money": [
+    {"symbol": "BTCUSDT"},
+    {"symbol": "ETHUSDT"}
+  ]
+}

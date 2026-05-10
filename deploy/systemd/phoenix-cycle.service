@@ -1,0 +1,16 @@
+[Unit]
+Description=Project Phoenix bounded scout+judge cycle
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=phoenix
+Group=phoenix
+WorkingDirectory=/opt/phoenix
+EnvironmentFile=/etc/phoenix/phoenix.env
+ExecStart=/opt/phoenix/.venv/bin/python /opt/phoenix/skills/phoenix-operator/phoenix_openclaw.py cycle --scan-duration-sec 20 --top-n 10 --audit-top-n 8 --snapshot-file phoenix_snapshot.openclaw.json --output-file phoenix_candidates.openclaw.json --env prod
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

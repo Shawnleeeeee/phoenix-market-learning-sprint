@@ -40,6 +40,7 @@ from phoenix.oms_state import (
     extract_order_response_state,
     sync_plan_quantities_to_fill,
 )
+from phoenix.safe_order_gateway import build_gateway_snapshot, submit_binance_order_intent
 from phoenix_live_execute import (
     extract_available_balance,
     extract_symbol_config,
@@ -3916,7 +3917,34 @@ async def emergency_flatten_after_failure(
     cleanup_response = None
     cleanup_error = None
     try:
-        close_response = await futures.new_order(close_payload)
+        close_response = await submit_binance_order_intent(
+            futures,
+            close_payload,
+            snapshot=build_gateway_snapshot(
+                symbol=intent.symbol,
+                side=exit_side,
+                positions=[{"symbol": intent.symbol, "side": "LONG" if intent.side == "BUY" else "SHORT", "protection_status": "healthy"}],
+                data_fresh=True,
+                websocket_status="healthy",
+                exchange_status="healthy",
+                position_state="known",
+                stop_protection_status="healthy",
+                protective_stop_path_available=True,
+                emergency_close_available=True,
+            ),
+            environment={
+                "runtime_mode": "TESTNET_LIVE",
+                "env": getattr(getattr(futures, "environment", None), "name", None) or "testnet",
+            },
+            source="phoenix_signal_bridge:emergency_flatten_after_failure",
+            purpose="emergency",
+            order_intent=intent,
+            dry_run=False,
+            extra_context={
+                "protective_stop_path_available": True,
+                "emergency_close_path_available": True,
+            },
+        )
     except Exception as exc:  # noqa: BLE001
         close_error = str(exc)
     try:
@@ -4023,7 +4051,44 @@ async def hard_kill_flatten_account(futures: BinanceFuturesClient) -> dict[str, 
         if payload is None:
             continue
         try:
-            response = await futures.new_order(payload)
+            response = await submit_binance_order_intent(
+                futures,
+                payload,
+                snapshot=build_gateway_snapshot(
+                    symbol=str(payload.get("symbol") or ""),
+                    side=str(payload.get("side") or ""),
+                    positions=[
+                        {
+                            "symbol": str(payload.get("symbol") or ""),
+                            "side": "LONG" if str(payload.get("side") or "").upper() == "SELL" else "SHORT",
+                            "protection_status": "healthy",
+                        }
+                    ],
+                    data_fresh=True,
+                    websocket_status="healthy",
+                    exchange_status="healthy",
+                    position_state="known",
+                    stop_protection_status="healthy",
+                    protective_stop_path_available=True,
+                    emergency_close_available=True,
+                ),
+                environment={
+                    "runtime_mode": "TESTNET_LIVE",
+                    "env": getattr(getattr(futures, "environment", None), "name", None) or "testnet",
+                },
+                source="phoenix_signal_bridge:hard_kill_flatten_account",
+                purpose="emergency",
+                order_intent={
+                    "symbol": payload.get("symbol"),
+                    "side": payload.get("side"),
+                    "margin_type": "ISOLATED",
+                },
+                dry_run=False,
+                extra_context={
+                    "protective_stop_path_available": True,
+                    "emergency_close_path_available": True,
+                },
+            )
             close_results.append({"symbol": payload["symbol"], "ok": True, "payload": payload, "response": response})
         except Exception as exc:  # noqa: BLE001
             close_results.append({"symbol": payload["symbol"], "ok": False, "payload": payload, "error": str(exc)})
@@ -4928,7 +4993,12 @@ async def execute_signal_trade(
         if item.name not in {"entry_market", "initial_protective_stop", "initial_take_profit"}
     ]
 
-    entry_response = await place_instruction(futures, entry_instruction)
+    entry_response = await place_instruction(
+        futures,
+        entry_instruction,
+        intent=reconciled_intent,
+        purpose="entry",
+    )
     entry_response_state = extract_order_response_state(entry_response if isinstance(entry_response, dict) else {})
     stream_entry_state = None
     if (
@@ -5001,7 +5071,12 @@ async def execute_signal_trade(
             if item.name not in {"entry_market", "initial_protective_stop", "initial_take_profit"}
         ]
     try:
-        stop_response = await place_instruction(futures, protective_stop)
+        stop_response = await place_instruction(
+            futures,
+            protective_stop,
+            intent=reconciled_intent,
+            purpose="protection",
+        )
     except Exception as exc:  # noqa: BLE001
         emergency = await emergency_flatten_after_failure(
             futures=futures,
@@ -5017,7 +5092,12 @@ async def execute_signal_trade(
     take_profit_response = None
     if take_profit_instruction is not None:
         try:
-            take_profit_response = await place_instruction(futures, take_profit_instruction)
+            take_profit_response = await place_instruction(
+                futures,
+                take_profit_instruction,
+                intent=reconciled_intent,
+                purpose="take_profit",
+            )
         except Exception as exc:  # noqa: BLE001
             emergency = await emergency_flatten_after_failure(
                 futures=futures,

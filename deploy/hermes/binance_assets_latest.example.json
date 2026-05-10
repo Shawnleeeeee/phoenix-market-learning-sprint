@@ -1,0 +1,9 @@
+{
+  "equity_usdt": 1000.0,
+  "available_balance_usdt": 845.32,
+  "unrealized_pnl_usdt": 1.28,
+  "distribution": [
+    {"asset": "USDT", "value_usdt": 845.32},
+    {"asset": "BTC", "value_usdt": 154.68}
+  ]
+}

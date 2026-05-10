@@ -11,6 +11,7 @@ from phoenix.config import load_credentials, load_execution_settings, load_proxy
 from phoenix.executor import PhoenixExecutor
 from phoenix.guardian_launch import spawn_guardian_worker
 from phoenix.models import OrderInstruction, TradeIntent
+from phoenix.safe_order_gateway import build_gateway_snapshot, submit_binance_order_intent
 
 
 def load_json_file(path: Path) -> dict[str, Any] | None:
@@ -317,7 +318,35 @@ async def _reattach_orphan_position_async(
     )
     if stop_order is None:
         stop_instruction = next(item for item in plan if item.name == "initial_protective_stop")
-        stop_order = await client.new_conditional_order(stop_instruction.payload)
+        stop_order = await submit_binance_order_intent(
+            client,
+            stop_instruction.payload,
+            snapshot=build_gateway_snapshot(
+                symbol=symbol,
+                side=exit_side,
+                positions=[{"symbol": symbol, "side": "LONG" if side == "BUY" else "SHORT", "protection_status": "healthy"}],
+                data_fresh=True,
+                websocket_status="healthy",
+                exchange_status="healthy",
+                position_state="known",
+                stop_protection_status="healthy",
+                protective_stop_path_available=True,
+                emergency_close_available=True,
+            ),
+            environment={
+                "runtime_mode": "TESTNET_LIVE",
+                "env": getattr(getattr(client, "environment", None), "name", None) or "testnet",
+            },
+            source="phoenix_guardian_workers:reattach_stop",
+            purpose="reattach",
+            endpoint=stop_instruction.endpoint,
+            order_intent=intent,
+            dry_run=False,
+            extra_context={
+                "protective_stop_path_available": True,
+                "emergency_close_path_available": True,
+            },
+        )
 
     now = datetime.now(timezone.utc)
     job_id = f"REATTACH-{symbol}-{int(now.timestamp())}"

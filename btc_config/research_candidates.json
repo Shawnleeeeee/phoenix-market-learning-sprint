@@ -1,0 +1,57 @@
+{
+  "generated_for": "Leiting BTC long-only candidate research profiles",
+  "profiles": [
+    {
+      "name": "long_only_trend_compression_v1",
+      "research_profile": "long_only",
+      "days": 30,
+      "allowed_regimes": [
+        "trend",
+        "compression"
+      ],
+      "target_column": "future_entry_edge_long_horizon_pct",
+      "allow_short": false,
+      "threshold": 0.25,
+      "regime_thresholds": {
+        "compression": 0.25,
+        "expansion": 0.25,
+        "range": 0.25,
+        "trend": 0.25
+      },
+      "stop_loss_pct": 0.25,
+      "breakeven_trigger_pct": 0.3,
+      "breakeven_lock_pct": 0.05,
+      "trailing_callback_pct": 0.25,
+      "fee_bps_per_side": 1.0,
+      "slippage_bps_per_side": 0.5,
+      "notes": [
+        "This is a candidate research configuration only.",
+        "Do not promote to live without positive walk-forward verification."
+      ]
+    },
+    {
+      "name": "long_only_trend_v1",
+      "research_profile": "long_only",
+      "days": 30,
+      "allowed_regimes": [
+        "trend"
+      ],
+      "target_column": "future_entry_edge_long_horizon_pct",
+      "allow_short": false,
+      "threshold": 0.25,
+      "stop_loss_pct": 0.25
+    },
+    {
+      "name": "long_only_compression_v1",
+      "research_profile": "long_only",
+      "days": 30,
+      "allowed_regimes": [
+        "compression"
+      ],
+      "target_column": "future_entry_edge_long_horizon_pct",
+      "allow_short": false,
+      "threshold": 0.25,
+      "stop_loss_pct": 0.25
+    }
+  ]
+}

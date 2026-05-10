@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Leiting BTC research refresh after more micro snapshots accumulate
+
+[Timer]
+OnBootSec=45min
+OnUnitActiveSec=6h
+Persistent=true
+Unit=leiting-btc-research-refresh.service
+
+[Install]
+WantedBy=timers.target

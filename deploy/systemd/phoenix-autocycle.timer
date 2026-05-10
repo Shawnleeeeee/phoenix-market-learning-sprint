@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Project Phoenix autonomous cycle every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Unit=phoenix-autocycle.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target

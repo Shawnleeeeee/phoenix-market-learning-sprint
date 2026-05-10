@@ -1,0 +1,14 @@
+[Unit]
+Description=Project Phoenix bi-hourly Hermes review
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/phoenix
+Environment=HERMES_HOME=/root/.hermes
+ExecStart=/opt/phoenix/.venv/bin/python /opt/phoenix/deploy/hermes/phoenix_bi_hourly_review.py --window-hours 2 --notify-telegram
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

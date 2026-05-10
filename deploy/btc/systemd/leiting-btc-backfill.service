@@ -1,0 +1,13 @@
+[Unit]
+Description=Leiting BTC backfill job
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/leiting-btc
+EnvironmentFile=-/opt/leiting-btc/btc_config/live.env
+ExecStart=/opt/leiting-btc/scripts/btc/run_backfill.sh
+
+[Install]
+WantedBy=multi-user.target

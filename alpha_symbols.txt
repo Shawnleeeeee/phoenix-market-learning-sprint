@@ -1,0 +1,4 @@
+# One futures symbol per line.
+# Replace this starter list with the full Alpha + 合约 overlap universe later.
+SOLUSDT
+BTCUSDT

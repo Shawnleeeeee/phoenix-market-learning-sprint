@@ -1,0 +1,9 @@
+symbol: BTCUSDT
+interval: 5m
+allow_auto_short: false
+max_open_positions: 1
+momentum_threshold: 0.65
+directional_confidence_min: 0.6
+execution_quality_min: 5.0
+event_risk_max: 4.0
+engine_poll_interval_sec: 30

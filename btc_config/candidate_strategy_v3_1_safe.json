@@ -1,0 +1,35 @@
+{
+  "name": "leiting_v3_1_safe_demo",
+  "engine_mode": "v3_simple",
+  "symbols": [
+    "BTCUSDT",
+    "ETHUSDT"
+  ],
+  "interval": "5m",
+  "allow_long": true,
+  "allow_short": true,
+  "threshold": 0.25,
+  "ema_fast_bars": 9,
+  "ema_slow_bars": 21,
+  "breakout_lookback_bars": 12,
+  "min_taker_buy_ratio_long": 1.02,
+  "max_taker_buy_ratio_short": 0.98,
+  "min_aggressive_flow_delta_long": 0.0,
+  "max_aggressive_flow_delta_short": 0.0,
+  "min_execution_quality_score": 7.0,
+  "max_spread_bps": 1.2,
+  "max_estimated_slippage_bps": 2.0,
+  "take_profit_net_roi_pct": 8.0,
+  "hard_stop_net_roi_pct": 6.0,
+  "estimated_fee_bps_per_side": 5.0,
+  "enable_breakeven": false,
+  "enable_trailing": false,
+  "notes": [
+    "BTC 和 ETH 双标的",
+    "更保守的 demo 真实撮合版本",
+    "每单使用虚拟本金 20%",
+    "净 ROI 止盈降到 8%",
+    "硬止损降到 6%",
+    "需要配合 BTC_DEMO_LEVERAGE=20 使用"
+  ]
+}

@@ -1,0 +1,23 @@
+shadow_model: freqai
+enabled: false
+mode: shadow_only
+symbol: BTCUSDT
+interval: 5m
+profile: long_only
+allowed_regimes:
+  - trend
+
+data_source:
+  dataset_csv: btc_data/research/datasets/BTCUSDT_5m/dataset.csv
+  output_dir: btc_data/research/shadow
+
+export:
+  include_target_column: true
+  include_baseline_score: true
+  include_regime: true
+
+comparison:
+  benchmark: leiting_research_latest
+  min_shadow_trade_count: 20
+  max_shadow_drawdown_pct: 5.0
+  require_positive_net_return: true

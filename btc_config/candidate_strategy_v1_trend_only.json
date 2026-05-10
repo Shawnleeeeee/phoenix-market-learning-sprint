@@ -1,0 +1,25 @@
+{
+  "name": "leiting_trend_only_v1",
+  "status": "research_candidate",
+  "symbol": "BTCUSDT",
+  "timeframe": "5m",
+  "research_window_days": 30,
+  "research_profile": "long_only",
+  "allowed_regimes": [
+    "trend"
+  ],
+  "target_column": "future_entry_edge_long_horizon_pct",
+  "allow_short": false,
+  "threshold": 0.25,
+  "stop_loss_pct": 0.25,
+  "breakeven_trigger_pct": 0.3,
+  "breakeven_lock_pct": 0.05,
+  "trailing_callback_pct": 0.25,
+  "fee_bps_per_side": 1.0,
+  "slippage_bps_per_side": 0.5,
+  "notes": [
+    "Candidate configuration only.",
+    "Not approved for live or testnet auto execution.",
+    "Requires positive walk-forward and more forward depth snapshots before promotion."
+  ]
+}

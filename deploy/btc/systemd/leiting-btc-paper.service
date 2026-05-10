@@ -1,0 +1,15 @@
+[Unit]
+Description=Leiting BTC paper trading service
+After=network-online.target leiting-btc-engine.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/leiting-btc
+EnvironmentFile=-/opt/leiting-btc/btc_config/live.env
+ExecStart=/opt/leiting-btc/scripts/btc/run_paper_service.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

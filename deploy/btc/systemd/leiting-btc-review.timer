@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Leiting BTC review periodically
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1h
+Unit=leiting-btc-review.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,39 @@
+{
+  "name": "leiting_trend_long_v2_1",
+  "status": "demo_candidate",
+  "symbol": "BTCUSDT",
+  "timeframe": "5m",
+  "research_window_days": 30,
+  "research_profile": "long_only",
+  "allowed_regimes": [
+    "trend",
+    "mixed"
+  ],
+  "target_column": "future_entry_edge_long_horizon_pct",
+  "allow_short": false,
+  "threshold": 0.25,
+  "min_momentum_score": 0.03,
+  "min_microstructure_score": 0.08,
+  "min_execution_quality_score": 8.0,
+  "max_event_risk_score": 1.0,
+  "max_spread_bps": 1.0,
+  "max_estimated_slippage_bps": 2.0,
+  "min_depth_imbalance": 0.15,
+  "min_taker_buy_ratio_5m": 0.54,
+  "min_price_change_5m_pct": 0.005,
+  "min_price_change_1h_pct": 0.0,
+  "min_aggressive_flow_delta": -50.0,
+  "max_global_long_short_ratio_5m": 1.35,
+  "stop_loss_pct": 0.25,
+  "breakeven_trigger_pct": 0.3,
+  "breakeven_lock_pct": 0.05,
+  "trailing_callback_pct": 0.25,
+  "fee_bps_per_side": 1.0,
+  "slippage_bps_per_side": 0.5,
+  "notes": [
+    "v2.1 candidate for demo-auto only.",
+    "Relaxes regime, short-horizon momentum and 5m price-change gating while preserving execution-quality protection.",
+    "Keeps long-only and strong microstructure requirements.",
+    "Still not approved for live capital without positive forward evidence."
+  ]
+}

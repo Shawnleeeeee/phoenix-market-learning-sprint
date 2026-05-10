@@ -87,6 +87,9 @@ class FakeExecutor:
             leverage=leverage,
             entry_price=100.0,
             quantity=1.0,
+            initial_stop_price=99.0,
+            take_profit_price=101.0,
+            margin_type="ISOLATED",
         )
 
 

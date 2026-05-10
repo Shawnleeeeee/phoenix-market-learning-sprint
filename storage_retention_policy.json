@@ -1,0 +1,52 @@
+{
+  "alert_disk_usage_pct": 85,
+  "archive_after_days": 60,
+  "archive_patterns": [
+    "round_runner_reports*/**",
+    "signal_lab_replay/**",
+    "phoenix_reports/**",
+    "audit_artifacts/**"
+  ],
+  "compress_after_days": 30,
+  "compress_patterns": [
+    "**/*.jsonl",
+    "**/*.log",
+    "**/*.csv"
+  ],
+  "delete_tmp_after_days": 7,
+  "emergency_disk_usage_pct": 95,
+  "keep_recent_days": 30,
+  "max_plan_items_per_category": 1000,
+  "max_report_versions": 10,
+  "min_free_disk_gb": 5,
+  "never_delete_patterns": [
+    ".env",
+    ".env.*",
+    "**/*.env",
+    "**/*secret*",
+    "**/*credential*",
+    "strategy_manifests/*.json",
+    "strategy_manifest_schema.json",
+    "experiment_manifest.json",
+    "experiments/*/manifest.json",
+    "strategy_experiments/*.json",
+    "**/round_*_trades.jsonl",
+    "**/signal_bridge_shadow_outcomes.jsonl",
+    "**/promotion_gate*.json",
+    "**/evidence_gate*.json",
+    "**/cost_gate*.json",
+    "old_strategy_freeze.json",
+    "storage_retention_policy.json"
+  ],
+  "red_disk_usage_pct": 90,
+  "safe_delete_patterns": [
+    ".tmp/**",
+    "**/*.tmp",
+    "**/__pycache__/**",
+    "**/.pytest_cache/**",
+    "**/.ruff_cache/**",
+    "**/*.pyc",
+    "**/empty_*"
+  ],
+  "version": "storage_manager_v1"
+}

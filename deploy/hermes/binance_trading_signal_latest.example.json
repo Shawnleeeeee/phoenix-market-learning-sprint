@@ -1,0 +1,31 @@
+{
+  "generated_at": "2026-04-21T00:00:00Z",
+  "buy_signals": [
+    {
+      "symbol": "BTCUSDT",
+      "direction": "LONG",
+      "score": 0.82,
+      "confidence": 0.79
+    },
+    {
+      "symbol": "ETHUSDT",
+      "direction": "LONG",
+      "score": 0.74,
+      "confidence": 0.72
+    }
+  ],
+  "sell_signals": [
+    {
+      "symbol": "SOLUSDT",
+      "direction": "SHORT",
+      "score": 0.77,
+      "confidence": 0.71
+    },
+    {
+      "symbol": "DOGEUSDT",
+      "direction": "SHORT",
+      "score": 0.68,
+      "confidence": 0.64
+    }
+  ]
+}

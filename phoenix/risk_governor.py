@@ -21,6 +21,8 @@ class RiskGovernorConfig:
     min_confidence: float = 0.55
     reduced_size_multiplier: float = 0.35
     default_max_allowed_size: float = 1.0
+    stale_snapshot_after_sec: int = 30
+    micro_scalp_max_holding_sec: int = 300
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +57,8 @@ def evaluate_risk(
     sanitized = dict(decision)
 
     _check_environment(environment, blocked_by)
+    _check_auto_confirm(decision, environment, sanitized, blocked_by)
+    _check_order_endpoint_environment(action, environment, blocked_by)
 
     system_status = snapshot.get("system_status") or {}
     account_risk = snapshot.get("account_risk") or {}
@@ -63,8 +67,9 @@ def evaluate_risk(
     candidate = _candidate_for_symbol(snapshot, symbol)
     trade_sensitive_action = action not in {"NO_TRADE", "STOP_TRADING", "WAIT_FOR_TRIGGER"}
 
-    if trade_sensitive_action and not system_status.get("data_fresh", False):
-        blocked_by.append("stale_snapshot")
+    if trade_sensitive_action:
+        _check_snapshot_health(system_status, config, blocked_by)
+        _check_state_known(system_status, action, blocked_by)
     if action in OPEN_ACTIONS and not account_risk.get("trading_allowed", False):
         blocked_by.append("account_trading_blocked")
     if account_risk.get("reason_if_blocked"):
@@ -72,6 +77,7 @@ def evaluate_risk(
 
     if action in OPEN_ACTIONS:
         _check_loss_controls(account_risk, config, blocked_by)
+        _check_entry_safety_paths(system_status, blocked_by)
     _check_position_safety(decision, positions, account_risk, config, blocked_by)
     _check_direction(decision, market_regime, candidate, config, blocked_by, notes)
     _check_execution_quality(candidate, action, config, blocked_by)
@@ -85,13 +91,16 @@ def evaluate_risk(
 
     required_orders = _required_protective_orders(decision) if action in OPEN_ACTIONS else []
     approved = not blocked_by
+    max_allowed_size = config.default_max_allowed_size
+    if approved and any(note.startswith("micro_scalp_size_multiplier=") for note in notes):
+        max_allowed_size = config.default_max_allowed_size * config.reduced_size_multiplier
     risk_decision = RiskDecision(
         approved=approved,
         reason="approved" if approved else ",".join(sorted(set(blocked_by))),
         blocked_by=sorted(set(blocked_by)),
         sanitized_action=sanitized,
         risk_notes=notes,
-        max_allowed_size=(config.default_max_allowed_size if approved else 0.0),
+        max_allowed_size=(max_allowed_size if approved else 0.0),
         required_protective_orders=required_orders,
         created_at=datetime.now(timezone.utc).isoformat(),
     )
@@ -112,14 +121,87 @@ def _check_environment(environment: dict[str, Any], blocked_by: list[str]) -> No
     env = str(environment.get("env") or environment.get("PHOENIX_BINANCE_ENV") or "testnet").lower()
     mainnet_live = bool(environment.get("mainnet_live", False)) or runtime_mode == "MAINNET_LIVE"
     live_enabled = str(environment.get("PHOENIX_MAINNET_LIVE_ENABLED") or environment.get("mainnet_live_enabled") or "false").lower()
+    legacy_enable_mainnet = str(environment.get("PHOENIX_ENABLE_MAINNET_LIVE") or "false").lower()
+    legacy_live_enabled = str(environment.get("PHOENIX_LIVE_TRADING_ENABLED") or environment.get("live_trading_enabled") or "false").lower()
+    promotion_allowed = str(environment.get("PHOENIX_PROMOTION_ALLOWED") or environment.get("promotion_allowed") or "false").lower()
     if mainnet_live or live_enabled in {"1", "true", "yes", "on"}:
         blocked_by.append("mainnet_live_blocked")
+    if legacy_enable_mainnet in {"1", "true", "yes", "on"}:
+        blocked_by.append("mainnet_live_blocked")
+    if legacy_live_enabled in {"1", "true", "yes", "on"}:
+        blocked_by.append("live_trading_enabled_blocked")
+    if promotion_allowed in {"1", "true", "yes", "on"}:
+        blocked_by.append("promotion_allowed_rejected")
     if runtime_mode not in {"DRY_RUN", "SHADOW", "MAINNET_SHADOW", "TESTNET_LIVE", "TESTNET"}:
         blocked_by.append("unsupported_runtime_mode")
     if runtime_mode in {"TESTNET_LIVE", "TESTNET"} and env not in {"testnet", "demo"}:
         blocked_by.append("testnet_env_required")
-    if env in {"prod", "mainnet"} and runtime_mode not in {"SHADOW", "MAINNET_SHADOW"}:
+    if env in {"prod", "mainnet"} and runtime_mode != "MAINNET_SHADOW":
         blocked_by.append("mainnet_env_blocked")
+
+
+def _check_order_endpoint_environment(action: str, environment: dict[str, Any], blocked_by: list[str]) -> None:
+    if action in {"NO_TRADE", "STOP_TRADING", "WAIT_FOR_TRIGGER"}:
+        return
+    runtime_mode = str(environment.get("runtime_mode") or environment.get("PHOENIX_RUNTIME_MODE") or "DRY_RUN").upper()
+    env = str(environment.get("env") or environment.get("PHOENIX_BINANCE_ENV") or "testnet").lower()
+    if runtime_mode == "MAINNET_SHADOW" and env in {"prod", "mainnet"}:
+        blocked_by.append("mainnet_shadow_order_endpoint_blocked")
+
+
+def _check_auto_confirm(
+    decision: dict[str, Any],
+    environment: dict[str, Any],
+    sanitized: dict[str, Any],
+    blocked_by: list[str],
+) -> None:
+    env_auto_confirm = _truthy(environment.get("AUTO_CONFIRM_WHEN_RULES_PASS"))
+    decision_auto_confirm = _truthy(decision.get("AUTO_CONFIRM_WHEN_RULES_PASS"))
+    execution_mode = str(environment.get("PHOENIX_EXECUTION_MODE") or decision.get("PHOENIX_EXECUTION_MODE") or "").upper()
+    if env_auto_confirm or decision_auto_confirm or execution_mode == "AUTO_CONFIRM_WHEN_RULES_PASS":
+        blocked_by.append("auto_confirm_rejected")
+    sanitized["AUTO_CONFIRM_WHEN_RULES_PASS"] = False
+
+
+def _check_snapshot_health(
+    system_status: dict[str, Any],
+    config: RiskGovernorConfig,
+    blocked_by: list[str],
+) -> None:
+    if not system_status.get("data_fresh", False):
+        blocked_by.append("stale_snapshot")
+    websocket_healthy = _status(system_status.get("websocket_status")) == "healthy"
+    exchange_healthy = _status(system_status.get("exchange_status")) == "healthy"
+    if not websocket_healthy or not exchange_healthy:
+        blocked_by.append("snapshot_transport_unhealthy")
+    snapshot_time = _parse_datetime(system_status.get("snapshot_time"))
+    if snapshot_time is None:
+        blocked_by.append("stale_snapshot")
+        return
+    age_sec = (datetime.now(timezone.utc) - snapshot_time).total_seconds()
+    if age_sec < 0:
+        return
+    if age_sec > max(1, int(config.stale_snapshot_after_sec or 30)):
+        blocked_by.append("stale_snapshot")
+
+
+def _check_state_known(system_status: dict[str, Any], action: str, blocked_by: list[str]) -> None:
+    position_state = _status(system_status.get("position_state") or "unknown")
+    stop_status = _status(system_status.get("stop_protection_status") or "unknown")
+    candidate_state = _status(system_status.get("candidate_state") or "known")
+    if position_state in {"", "unknown", "unavailable", "stale"}:
+        blocked_by.append("position_state_unknown")
+    if stop_status in {"", "unknown", "unavailable", "failed", "missing"}:
+        blocked_by.append("stop_order_status_unknown")
+    if action in OPEN_ACTIONS and candidate_state in {"", "unknown", "unavailable", "stale"}:
+        blocked_by.append("candidate_state_unknown")
+
+
+def _check_entry_safety_paths(system_status: dict[str, Any], blocked_by: list[str]) -> None:
+    if system_status.get("protective_stop_path_available") is not True:
+        blocked_by.append("protective_stop_path_unavailable")
+    if system_status.get("emergency_close_available") is not True:
+        blocked_by.append("emergency_close_unavailable")
 
 
 def _check_loss_controls(
@@ -177,9 +259,12 @@ def _check_direction(
     if action not in OPEN_ACTIONS:
         return
     lock = str(market_regime.get("direction_lock") or "BOTH_ALLOWED").upper()
+    regime = str(market_regime.get("regime") or "UNKNOWN").upper()
     setup_type = str(decision.get("trade_type") or (candidate or {}).get("setup_type") or "").upper()
-    is_micro_scalp = setup_type == "QUICK_TRADE" and bool(decision.get("size_reduced", False))
-    if lock == "NO_TRADE":
+    is_micro_scalp = _is_micro_scalp_exception(decision, candidate, config, setup_type)
+    if regime == "HIGH_VOL" and lock != "NO_TRADE":
+        lock = "NO_TRADE"
+    if lock == "NO_TRADE" and not is_micro_scalp:
         blocked_by.append("direction_lock_no_trade")
     if action == "ENTER_SHORT" and lock == "LONG_ONLY_OR_NO_TRADE" and not is_micro_scalp:
         blocked_by.append("direction_lock_conflict")
@@ -187,6 +272,23 @@ def _check_direction(
         blocked_by.append("direction_lock_conflict")
     if is_micro_scalp:
         notes.append(f"micro_scalp_size_multiplier={config.reduced_size_multiplier}")
+
+
+def _is_micro_scalp_exception(
+    decision: dict[str, Any],
+    candidate: dict[str, Any] | None,
+    config: RiskGovernorConfig,
+    setup_type: str,
+) -> bool:
+    if setup_type != "QUICK_TRADE":
+        return False
+    candidate_exception = _truthy((candidate or {}).get("micro_scalp_exception"))
+    if not bool(decision.get("size_reduced", False)) and not candidate_exception:
+        return False
+    if not (_truthy(decision.get("micro_scalp_exception")) or candidate_exception):
+        return False
+    max_holding = _safe_float(decision.get("max_holding_time_sec") or (candidate or {}).get("max_holding_time_sec"))
+    return max_holding is not None and max_holding <= max(1, int(config.micro_scalp_max_holding_sec or 300))
 
 
 def _check_execution_quality(
@@ -255,3 +357,28 @@ def _safe_float(value: Any, *, default: float | None = None) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _status(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)

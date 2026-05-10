@@ -6,9 +6,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from phoenix.hermes_decision import validate_hermes_decision
 from phoenix.review_reporter import append_review_log, build_review_report
-from phoenix.risk_governor import RiskGovernorConfig, append_jsonl, evaluate_risk
+from phoenix.risk_governor import RiskGovernorConfig, append_jsonl
+from phoenix.safe_order_gateway import submit_order_intent
 from phoenix.trader_snapshot import build_trader_snapshot
 
 
@@ -35,41 +35,31 @@ def run_trader_cycle(
     }
 
     append_jsonl(output / "snapshot.jsonl", {"event": "snapshot", "payload": snapshot})
-    validation = validate_hermes_decision(decision_payload)
-    append_jsonl(output / "hermes_decision.jsonl", {"event": "hermes_decision", **validation.to_dict()})
+    gateway = _run_async_gateway(
+        decision_payload,
+        snapshot,
+        environment,
+        output,
+        dry_run=dry_run,
+        risk_config=risk_config,
+    )
+    validation_result = gateway.validation_result
+    append_jsonl(output / "hermes_decision.jsonl", {"event": "hermes_decision", **validation_result})
+    risk_result = gateway.risk_governor_result
+    append_jsonl(
+        output / "risk_governor_result.jsonl",
+        {"event": "risk_approved" if gateway.approved else "risk_reject", **risk_result},
+    )
 
-    if not validation.valid:
-        risk_result = {
-            "approved": False,
-            "reason": "invalid_hermes_decision",
-            "blocked_by": validation.reasons,
-            "sanitized_action": validation.decision,
-            "risk_notes": [],
-            "max_allowed_size": 0.0,
-            "required_protective_orders": [],
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }
-    else:
-        risk = evaluate_risk(
-            validation.decision or {},
-            snapshot,
-            environment=environment,
-            config=risk_config,
-            log_path=output / "risk_governor_result.jsonl",
-        )
-        risk_result = risk.to_dict()
-        if risk.approved:
-            append_jsonl(output / "risk_governor_result.jsonl", {"event": "risk_approved", **risk_result})
-
-    execution_intent = _build_execution_intent(validation.decision, risk_result, dry_run=dry_run)
+    execution_intent = gateway.execution_intent
     append_jsonl(output / "execution_intent.jsonl", {"event": "execution_intent", **execution_intent})
 
-    execution_result = _execution_result_placeholder(execution_intent, risk_result)
+    execution_result = gateway.execution_result or _execution_result_placeholder(execution_intent, risk_result)
     append_jsonl(output / "execution_result.jsonl", {"event": "execution_result", **execution_result})
 
     report_type = "PRE_ENTER" if risk_result.get("approved") and execution_intent.get("action") in {"ENTER_LONG", "ENTER_SHORT"} else "RISK_REJECT"
     report_payload = {
-        **(validation.decision or {}),
+        **(gateway.normalized_decision or {}),
         "blocked_by": risk_result.get("blocked_by"),
         "reason": risk_result.get("reason"),
     }
@@ -78,13 +68,38 @@ def run_trader_cycle(
 
     return {
         "snapshot": snapshot,
-        "hermes_validation": validation.to_dict(),
+        "hermes_validation": validation_result,
         "risk_governor_result": risk_result,
         "execution_intent": execution_intent,
         "execution_result": execution_result,
         "review_report": review.to_dict(),
         "output_dir": str(output),
     }
+
+
+def _run_async_gateway(
+    decision_payload: dict[str, Any],
+    snapshot: dict[str, Any],
+    environment: dict[str, Any],
+    output: Path,
+    *,
+    dry_run: bool,
+    risk_config: RiskGovernorConfig | None,
+):
+    import asyncio
+
+    return asyncio.run(
+        submit_order_intent(
+            decision_payload,
+            snapshot,
+            environment,
+            "HERMES",
+            dry_run=dry_run,
+            risk_config=risk_config,
+            log_dir=output,
+            audit_log_path=output / "safe_order_gateway.jsonl",
+        )
+    )
 
 
 def load_json_file(path: str | Path) -> dict[str, Any]:

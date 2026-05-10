@@ -1,0 +1,46 @@
+model:
+  default: "gemini-3.1-pro-preview"
+  provider: "gemini"
+
+providers:
+  openai-direct:
+    name: "OpenAI Direct"
+    api: "https://api.openai.com/v1"
+    key_env: "OPENAI_API_KEY"
+    transport: "codex_responses"
+
+fallback_providers:
+  - provider: openai-direct
+    model: "gpt-5.4"
+
+toolsets:
+  - "hermes-cli"
+
+agent:
+  max_turns: 24
+  tool_use_enforcement: auto
+
+terminal:
+  backend: local
+  cwd: /opt/phoenix
+  timeout: 180
+  persistent_shell: false
+
+compression:
+  enabled: true
+  threshold: 0.35
+  target_ratio: 0.15
+  protect_last_n: 12
+
+auxiliary:
+  compression:
+    provider: gemini
+    model: "gemini-3.1-pro-preview"
+  approval:
+    provider: gemini
+    model: "gemini-3.1-pro-preview"
+  session_search:
+    provider: gemini
+    model: "gemini-3.1-pro-preview"
+
+group_sessions_per_user: true

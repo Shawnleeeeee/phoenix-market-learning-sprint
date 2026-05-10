@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://phoenix.local/schemas/review_10_trades.schema.json",
+  "title": "BTC 10 单复盘包",
+  "type": "object",
+  "required": [
+    "review_id",
+    "generated_at",
+    "window_trade_count",
+    "net_pnl",
+    "gross_pnl",
+    "fees",
+    "funding",
+    "win_rate",
+    "profit_factor",
+    "avg_win",
+    "avg_loss",
+    "avg_hold_minutes",
+    "max_drawdown",
+    "slippage_mean_bps",
+    "slippage_p95_bps",
+    "long_stats",
+    "short_stats",
+    "regime_breakdown",
+    "top_skip_reasons",
+    "top_failure_reasons",
+    "recommendations",
+    "proposed_parameter_changes",
+    "confidence"
+  ],
+  "properties": {
+    "review_id": { "type": "string" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "window_trade_count": { "type": "integer", "minimum": 1 },
+    "net_pnl": { "type": "number" },
+    "gross_pnl": { "type": "number" },
+    "fees": { "type": "number" },
+    "funding": { "type": "number" },
+    "win_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+    "profit_factor": { "type": "number", "minimum": 0 },
+    "avg_win": { "type": "number" },
+    "avg_loss": { "type": "number" },
+    "avg_hold_minutes": { "type": "number", "minimum": 0 },
+    "max_drawdown": { "type": "number", "minimum": 0 },
+    "slippage_mean_bps": { "type": "number", "minimum": 0 },
+    "slippage_p95_bps": { "type": "number", "minimum": 0 },
+    "long_stats": { "type": "object" },
+    "short_stats": { "type": "object" },
+    "regime_breakdown": { "type": "object" },
+    "top_skip_reasons": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["reason", "count"],
+        "properties": {
+          "reason": { "type": "string" },
+          "count": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "top_failure_reasons": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["reason", "count"],
+        "properties": {
+          "reason": { "type": "string" },
+          "count": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "recommendations": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "proposed_parameter_changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["parameter", "current", "proposed", "reason"],
+        "properties": {
+          "parameter": { "type": "string" },
+          "current": {},
+          "proposed": {},
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+  }
+}
+

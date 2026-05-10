@@ -1,0 +1,15 @@
+[Unit]
+Description=Project Phoenix autonomous cycle + conditional dispatch
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/phoenix
+Environment=HERMES_HOME=/root/.hermes
+KillMode=process
+ExecStart=/opt/phoenix/deploy/hermes/phoenix_hermes_runner.sh autocycle --scan-duration-sec 20 --top-n 10 --audit-top-n 20 --snapshot-file phoenix_snapshot.openclaw.json --output-file phoenix_candidates.openclaw.json --quote-allocation 200 --leverage 5 --env prod
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

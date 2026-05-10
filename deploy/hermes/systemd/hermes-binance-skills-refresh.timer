@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh Hermes external market references hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+Unit=hermes-binance-skills-refresh.service
+
+[Install]
+WantedBy=timers.target

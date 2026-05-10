@@ -1,0 +1,22 @@
+enabled: false
+
+orderbook_imbalance:
+  enabled: true
+  max_depth_levels: 5
+
+metaorder_features:
+  enabled: true
+
+tca_features:
+  enabled: true
+
+changepoint_features:
+  enabled: true
+
+inputs:
+  snapshot_jsonl: btc_data/research/runtime/market_micro_snapshots.jsonl
+  output_json: btc_data/research/runtime/flow_feature_snapshot.json
+
+usage_rules:
+  research_only: true
+  block_live_execution_access: true

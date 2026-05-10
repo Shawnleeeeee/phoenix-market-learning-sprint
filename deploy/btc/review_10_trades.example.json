@@ -1,0 +1,70 @@
+{
+  "review_id": "btc_review_0010",
+  "generated_at": "2026-04-20T04:00:00Z",
+  "window_trade_count": 10,
+  "net_pnl": 27.42,
+  "gross_pnl": 31.85,
+  "fees": -4.11,
+  "funding": -0.32,
+  "win_rate": 0.6,
+  "profit_factor": 1.42,
+  "avg_win": 11.23,
+  "avg_loss": -7.91,
+  "avg_hold_minutes": 18.4,
+  "max_drawdown": 16.7,
+  "slippage_mean_bps": 3.8,
+  "slippage_p95_bps": 9.5,
+  "long_stats": {
+    "trade_count": 6,
+    "net_pnl": 19.11,
+    "win_rate": 0.67
+  },
+  "short_stats": {
+    "trade_count": 4,
+    "net_pnl": 8.31,
+    "win_rate": 0.5
+  },
+  "regime_breakdown": {
+    "trend_up": {
+      "trade_count": 4,
+      "net_pnl": 14.2
+    },
+    "range": {
+      "trade_count": 3,
+      "net_pnl": -3.5
+    },
+    "trend_down": {
+      "trade_count": 3,
+      "net_pnl": 16.72
+    }
+  },
+  "top_skip_reasons": [
+    { "reason": "directional_bias_none", "count": 19 },
+    { "reason": "execution_quality_gate", "count": 7 }
+  ],
+  "top_failure_reasons": [
+    { "reason": "late_momentum_entry", "count": 3 },
+    { "reason": "funding_overcrowded_long", "count": 2 }
+  ],
+  "recommendations": [
+    "上调多头放行时的 execution quality 最低阈值",
+    "在 funding 过热时降低做多频率",
+    "缩短区间震荡 regime 下的持仓时间"
+  ],
+  "proposed_parameter_changes": [
+    {
+      "parameter": "execution_quality_min",
+      "current": 5.0,
+      "proposed": 6.0,
+      "reason": "低执行质量交易占亏损样本比重过高"
+    },
+    {
+      "parameter": "long_funding_hard_cap_bps",
+      "current": 8.0,
+      "proposed": 6.0,
+      "reason": "高 funding 环境下多头交易回撤明显"
+    }
+  ],
+  "confidence": 0.74
+}
+

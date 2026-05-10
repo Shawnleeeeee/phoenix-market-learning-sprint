@@ -1,0 +1,9 @@
+default_leverage: 10
+risk_budget_pct: 1.0
+max_daily_loss_pct: 3.0
+cooldown_minutes_after_close: 30
+max_slippage_bps: 8.0
+max_spread_bps: 5.0
+funding_hard_cap_bps_long: 8.0
+funding_hard_cap_bps_short: 8.0
+

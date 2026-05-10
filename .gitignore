@@ -1,41 +1,57 @@
-__pycache__/
-*.py[cod]
-*.pyo
-*.bak*
-*.before
-vps_sync_tmp/
-
+# Local secrets
 .env
 .env.*
-*.env
-*.local.env
-
-*secret*
-*secrets*
-*token*
-*password*
-*private_key*
+!.env.example
+**/live.env
+!**/live.env.example
+**/*.local.env
+vps_secrets*.env
+*secret*.env
+*secrets*.env
+*credential*.env
+*credentials*.env
 *.pem
 *.key
-id_rsa*
-id_ed25519*
+*.p12
 
-.DS_Store
-Thumbs.db
+# Python environments and caches
+.venv/
+.venv-*/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
-# Phoenix runtime data and generated operational artifacts
-logs/
-state/
-backups/
-deploy_backups/
-.deploy_tmp/
+# Logs and runtime files
+*.log
+*.pid
 .tmp/
-round_runner_reports*/
-signal_lab_runs/
-signal_lab_replay/
-analyst_exports/
+tmp-*.json
+tmp_*.py
+logs/
+btc_data/
 analyst_reports/
-hermes_exports/
+audit_artifacts/
+round_runner_reports*/
+signal_lab_replay/
+phoenix_guardian_workers/
 hermes_inbox/
-hermes_reports/
-phoenix_reports/__pycache__/
+hermes_exports/
+oi_family_forward_shadow_after_cost_*/
+phoenix_snapshot*.json
+
+# Build artifacts
+dist/
+build/
+binance-skills-hub/
+*.zip
+*.rar
+*.7z
+*.tar
+*.gz
+*.egg-info/
+
+# OS metadata
+.DS_Store
+__MACOSX/

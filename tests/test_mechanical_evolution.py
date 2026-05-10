@@ -144,13 +144,20 @@ class MechanicalEvolutionTests(unittest.TestCase):
                 "strategy_id": "volatility_long",
                 "version": "v2",
                 "mode": "testnet_candidate",
+                "evidence_level": 4,
                 "candidate": {
                     "sample_count": 60,
                     "independent_event_count": 40,
+                    "net_pnl": 12.0,
                     "avg_net_pnl": 0.2,
-                    "avg_return_pct": 0.05,
+                    "after_cost_edge": 1.2,
+                    "expected_net_edge_bps": 4.0,
+                    "expected_gross_move_bps": 15.0,
+                    "expected_total_cost_bps": 4.0,
                     "profit_factor": 1.5,
                     "max_drawdown": -2.0,
+                    "max_symbol_concentration_pct": 25.0,
+                    "parity_passed": True,
                     "fee_drag_ratio": 0.2,
                     "take_profit_net_loss_count": 0,
                     "monte_carlo_probability_total_return_negative": 0.2,
@@ -162,7 +169,8 @@ class MechanicalEvolutionTests(unittest.TestCase):
             }
         )
 
-        self.assertIn(result["status"], {"promoted_testnet_candidate", "promoted_shadow_candidate"})
+        self.assertEqual(result["status"], "manual_review_required")
+        self.assertFalse(result["auto_promotion_allowed"])
         self.assertFalse(result["mainnet_live_promotion_allowed"])
         self.assertFalse(result["live_trading_enabled"])
 

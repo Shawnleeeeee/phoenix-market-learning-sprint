@@ -1,0 +1,8 @@
+[Unit]
+Description=Refresh Hermes external market references
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/phoenix/deploy/hermes/binance_skills_refresh.sh

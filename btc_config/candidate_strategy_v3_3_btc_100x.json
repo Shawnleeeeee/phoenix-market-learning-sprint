@@ -1,0 +1,38 @@
+{
+  "name": "leiting_v3_3_btc_100x_demo",
+  "engine_mode": "v3_simple",
+  "symbols": [
+    "BTCUSDT"
+  ],
+  "interval": "5m",
+  "allow_long": true,
+  "allow_short": true,
+  "threshold": 0.45,
+  "ema_fast_bars": 9,
+  "ema_slow_bars": 21,
+  "breakout_lookback_bars": 20,
+  "min_ema_gap_pct": 0.14,
+  "require_breakout_confirmation": true,
+  "require_flow_confirmation": true,
+  "min_taker_buy_ratio_long": 1.06,
+  "max_taker_buy_ratio_short": 0.94,
+  "min_aggressive_flow_delta_long": 60.0,
+  "max_aggressive_flow_delta_short": -60.0,
+  "min_depth_imbalance_long": 0.10,
+  "max_depth_imbalance_short": -0.10,
+  "min_execution_quality_score": 8.2,
+  "max_spread_bps": 0.8,
+  "max_estimated_slippage_bps": 1.0,
+  "take_profit_net_roi_pct": 60.0,
+  "hard_stop_net_roi_pct": 30.0,
+  "estimated_fee_bps_per_side": 5.0,
+  "enable_breakeven": false,
+  "enable_trailing": false,
+  "notes": [
+    "BTC 单标的",
+    "100x 版本，但放弃 26/12，改成更能覆盖费用和 5m 噪音的 60/30",
+    "只保留 breakout + flow 同时确认的入场",
+    "提高阈值，减少 5m 假突破",
+    "先做研究回放和 forward shadow，再恢复自动开单"
+  ]
+}

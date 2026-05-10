@@ -26,6 +26,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from phoenix.binance_futures import BinanceAPIError, BinanceFuturesClient
 from phoenix.config import BinanceCredentials, load_credentials, load_execution_settings, load_proxy_settings, resolve_environment
 from phoenix.executor import PhoenixExecutor
+from phoenix.safe_order_gateway import build_gateway_snapshot, submit_binance_order_intent
 from phoenix_learning_gate import LearningGateConfig, build_learning_gate_decision, load_recent_learning_records
 from phoenix_learning_store import append_learning_row
 from phoenix_position_manager import build_dynamic_exit_report
@@ -2480,6 +2481,81 @@ def apply_symbol_cooldown(cooldowns: dict[str, float], symbol: str, *, seconds: 
     cooldowns[symbol] = max(cooldowns.get(symbol, 0.0), time.time() + seconds)
 
 
+async def submit_runner_order(
+    futures: BinanceFuturesClient,
+    payload: dict[str, Any],
+    *,
+    source: str,
+    purpose: str,
+    candidate: Candidate | None = None,
+    intent: Any | None = None,
+    args: argparse.Namespace | None = None,
+) -> dict[str, Any]:
+    symbol = str(payload.get("symbol") or getattr(intent, "symbol", "") or (candidate.symbol if candidate else "") or "UNKNOWN").upper()
+    side = str(payload.get("side") or getattr(intent, "side", "") or (candidate.side if candidate else "") or "").upper()
+    reduce_like = str(payload.get("reduceOnly") or "").lower() == "true" or str(payload.get("closePosition") or "").lower() == "true"
+    positions: list[dict[str, Any]] = []
+    if reduce_like or purpose in {"exit", "emergency", "take_profit", "protection"}:
+        positions.append({"symbol": symbol, "side": "LONG" if side == "SELL" else "SHORT", "protection_status": "healthy"})
+    candidate_payload = asdict(candidate) if candidate is not None else None
+    if candidate_payload is not None:
+        candidate_payload.setdefault("setup_type", "QUICK_TRADE")
+        candidate_payload.setdefault("spread_bps", 0.0)
+        candidate_payload.setdefault("estimated_slippage_bps", 0.0)
+        candidate_payload.setdefault("liquidity_ok", True)
+    snapshot = build_gateway_snapshot(
+        symbol=symbol,
+        side=side,
+        candidate=candidate_payload,
+        positions=positions,
+        data_fresh=True,
+        websocket_status="healthy",
+        exchange_status="healthy",
+        position_state="known",
+        stop_protection_status="healthy",
+        protective_stop_path_available=True,
+        emergency_close_available=True,
+        max_open_positions=int(getattr(args, "max_open_positions", 10) or 10),
+    )
+    return await submit_binance_order_intent(
+        futures,
+        payload,
+        snapshot=snapshot,
+        environment={
+            "runtime_mode": getattr(args, "runtime_mode", TESTNET_LIVE) if args is not None else TESTNET_LIVE,
+            "env": getattr(args, "env", None) if args is not None else (getattr(getattr(futures, "environment", None), "name", None) or "testnet"),
+        },
+        source=source,
+        purpose=purpose,
+        endpoint=ORDER_SUBMIT_PATH,
+        order_intent=_intent_to_gateway_payload(intent),
+        dry_run=False,
+        extra_context={
+            "protective_stop_path_available": True,
+            "emergency_close_path_available": True,
+        },
+    )
+
+
+def _intent_to_gateway_payload(intent: Any | None) -> dict[str, Any] | None:
+    if intent is None:
+        return None
+    if hasattr(intent, "to_dict"):
+        return intent.to_dict()
+    payload: dict[str, Any] = {}
+    for key in (
+        "symbol",
+        "side",
+        "entry_price",
+        "initial_stop_price",
+        "take_profit_price",
+        "margin_type",
+    ):
+        if hasattr(intent, key):
+            payload[key] = getattr(intent, key)
+    return payload or None
+
+
 async def try_passive_reduce_only_close(
     futures: BinanceFuturesClient,
     *,
@@ -2507,7 +2583,8 @@ async def try_passive_reduce_only_close(
     if passive_price <= 0:
         return None
 
-    close_order = await futures.new_order(
+    close_order = await submit_runner_order(
+        futures,
         {
             "symbol": symbol,
             "side": close_side,
@@ -2517,7 +2594,9 @@ async def try_passive_reduce_only_close(
             "price": passive_price,
             "reduceOnly": "true",
             "newOrderRespType": "RESULT",
-        }
+        },
+        source="phoenix_testnet_round_runner:passive_reduce_only_close",
+        purpose="exit",
     )
     order_id = int(close_order.get("orderId") or 0)
     if order_id <= 0:
@@ -2599,7 +2678,8 @@ async def manage_open_trade(
     if should_use_resting_take_profit:
         take_profit_order_price = round_down_to_step(take_price, tick_size)
         if take_profit_order_price > 0 and abs(take_profit_order_price - entry_price) >= max(tick_size, entry_price * 0.0001):
-            take_profit_order = await futures.new_order(
+            take_profit_order = await submit_runner_order(
+                futures,
                 {
                     "symbol": candidate.symbol,
                     "side": "SELL" if candidate.side == "BUY" else "BUY",
@@ -2609,7 +2689,10 @@ async def manage_open_trade(
                     "price": take_profit_order_price,
                     "reduceOnly": "true",
                     "newOrderRespType": "RESULT",
-                }
+                },
+                source="phoenix_testnet_round_runner:resting_take_profit",
+                purpose="take_profit",
+                candidate=candidate,
             )
             take_profit_order_id = int(take_profit_order.get("orderId") or 0)
 
@@ -2744,7 +2827,8 @@ async def manage_open_trade(
                             "fee_aware_take_profit": fee_aware_take,
                         }
             close_order_submit_timestamp_ms = int(time.time() * 1000)
-            close_order = await futures.new_order(
+            close_order = await submit_runner_order(
+                futures,
                 {
                     "symbol": candidate.symbol,
                     "side": close_side,
@@ -2752,7 +2836,10 @@ async def manage_open_trade(
                     "quantity": abs(position_amt),
                     "reduceOnly": "true",
                     "newOrderRespType": "RESULT",
-                }
+                },
+                source="phoenix_testnet_round_runner:market_reduce_only_close",
+                purpose="exit",
+                candidate=candidate,
             )
             close_order_response_timestamp_ms = int(time.time() * 1000)
             close_order_id = int(close_order.get("orderId") or 0)
@@ -2889,7 +2976,8 @@ async def flatten_active_positions(futures: BinanceFuturesClient) -> list[dict[s
         if not symbol or abs(position_amt) <= 1e-12:
             continue
         close_side = "SELL" if position_amt > 0 else "BUY"
-        close_order = await futures.new_order(
+        close_order = await submit_runner_order(
+            futures,
             {
                 "symbol": symbol,
                 "side": close_side,
@@ -2897,7 +2985,9 @@ async def flatten_active_positions(futures: BinanceFuturesClient) -> list[dict[s
                 "quantity": abs(position_amt),
                 "reduceOnly": "true",
                 "newOrderRespType": "RESULT",
-            }
+            },
+            source="phoenix_testnet_round_runner:flatten_active_positions",
+            purpose="emergency",
         )
         flattened.append(
             {
@@ -2965,7 +3055,8 @@ async def flatten_symbol_position(futures: BinanceFuturesClient, symbol: str) ->
     if abs(position_amt) <= 1e-12:
         return None
     close_side = "SELL" if position_amt > 0 else "BUY"
-    close_order = await futures.new_order(
+    close_order = await submit_runner_order(
+        futures,
         {
             "symbol": symbol,
             "side": close_side,
@@ -2973,7 +3064,9 @@ async def flatten_symbol_position(futures: BinanceFuturesClient, symbol: str) ->
             "quantity": abs(position_amt),
             "reduceOnly": "true",
             "newOrderRespType": "RESULT",
-        }
+        },
+        source="phoenix_testnet_round_runner:flatten_symbol_position",
+        purpose="emergency",
     )
     return {
         "symbol": symbol,
@@ -3062,7 +3155,8 @@ async def run_trade(
             maker_entry_price = round_up_to_step(ask_price or intent.entry_price, rules.tick_size)
         if maker_entry_price > 0:
             maker_filled = False
-            entry_order = await futures.new_order(
+            entry_order = await submit_runner_order(
+                futures,
                 {
                     "symbol": intent.symbol,
                     "side": intent.side,
@@ -3071,7 +3165,12 @@ async def run_trade(
                     "quantity": intent.quantity,
                     "price": maker_entry_price,
                     "newOrderRespType": "RESULT",
-                }
+                },
+                source="phoenix_testnet_round_runner:maker_entry",
+                purpose="entry",
+                candidate=candidate,
+                intent=intent,
+                args=args,
             )
             entry_order_id = int(entry_order.get("orderId") or 0)
             if entry_order_id > 0:
@@ -3090,14 +3189,20 @@ async def run_trade(
                     if entry_quantity < intent.quantity * 0.6:
                         remaining_quantity = round_down_to_step(intent.quantity - entry_quantity, rules.step_size)
                         if remaining_quantity >= rules.min_qty:
-                            top_up_order = await futures.new_order(
+                            top_up_order = await submit_runner_order(
+                                futures,
                                 {
                                     "symbol": intent.symbol,
                                     "side": intent.side,
                                     "type": "MARKET",
                                     "quantity": remaining_quantity,
                                     "newOrderRespType": "RESULT",
-                                }
+                                },
+                                source="phoenix_testnet_round_runner:entry_top_up",
+                                purpose="entry",
+                                candidate=candidate,
+                                intent=intent,
+                                args=args,
                             )
                             top_up_order_id = int(top_up_order.get("orderId") or 0)
                             if top_up_order_id > 0:
@@ -3120,14 +3225,20 @@ async def run_trade(
                 entry_order = None
 
     if entry_order is None:
-        entry_order = await futures.new_order(
+        entry_order = await submit_runner_order(
+            futures,
             {
                 "symbol": intent.symbol,
                 "side": intent.side,
                 "type": "MARKET",
                 "quantity": intent.quantity,
                 "newOrderRespType": "RESULT",
-            }
+            },
+            source="phoenix_testnet_round_runner:fallback_market_entry",
+            purpose="entry",
+            candidate=candidate,
+            intent=intent,
+            args=args,
         )
         fallback_entry_order_id = int(entry_order.get("orderId") or 0)
         if fallback_entry_order_id > 0:
