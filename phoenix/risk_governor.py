@@ -1,0 +1,257 @@
+from __future__ import annotations
+
+import json
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from phoenix.hermes_decision import OPEN_ACTIONS, REDUCE_ONLY_ACTIONS
+
+
+@dataclass(frozen=True, slots=True)
+class RiskGovernorConfig:
+    max_open_positions: int = 1
+    max_risk_per_trade_pct: float = 0.75
+    max_daily_loss_pct: float = 3.0
+    loss_streak_lock: int = 3
+    cooldown_after_loss_sec: int = 900
+    max_spread_bps: float = 12.0
+    max_slippage_bps: float = 8.0
+    min_confidence: float = 0.55
+    reduced_size_multiplier: float = 0.35
+    default_max_allowed_size: float = 1.0
+
+
+@dataclass(frozen=True, slots=True)
+class RiskDecision:
+    approved: bool
+    reason: str
+    blocked_by: list[str] = field(default_factory=list)
+    sanitized_action: dict[str, Any] | None = None
+    risk_notes: list[str] = field(default_factory=list)
+    max_allowed_size: float = 0.0
+    required_protective_orders: list[dict[str, Any]] = field(default_factory=list)
+    created_at: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def evaluate_risk(
+    decision: dict[str, Any],
+    snapshot: dict[str, Any],
+    *,
+    environment: dict[str, Any] | None = None,
+    config: RiskGovernorConfig | None = None,
+    log_path: str | Path | None = None,
+) -> RiskDecision:
+    config = config or RiskGovernorConfig()
+    environment = environment or {}
+    blocked_by: list[str] = []
+    notes: list[str] = []
+    action = str(decision.get("action") or "").upper()
+    symbol = str(decision.get("symbol") or "").upper()
+    sanitized = dict(decision)
+
+    _check_environment(environment, blocked_by)
+
+    system_status = snapshot.get("system_status") or {}
+    account_risk = snapshot.get("account_risk") or {}
+    market_regime = snapshot.get("market_regime") or {}
+    positions = list(snapshot.get("current_positions") or [])
+    candidate = _candidate_for_symbol(snapshot, symbol)
+    trade_sensitive_action = action not in {"NO_TRADE", "STOP_TRADING", "WAIT_FOR_TRIGGER"}
+
+    if trade_sensitive_action and not system_status.get("data_fresh", False):
+        blocked_by.append("stale_snapshot")
+    if action in OPEN_ACTIONS and not account_risk.get("trading_allowed", False):
+        blocked_by.append("account_trading_blocked")
+    if account_risk.get("reason_if_blocked"):
+        notes.append(f"account_block_reason={account_risk.get('reason_if_blocked')}")
+
+    if action in OPEN_ACTIONS:
+        _check_loss_controls(account_risk, config, blocked_by)
+    _check_position_safety(decision, positions, account_risk, config, blocked_by)
+    _check_direction(decision, market_regime, candidate, config, blocked_by, notes)
+    _check_execution_quality(candidate, action, config, blocked_by)
+    _check_stop_protection(decision, action, positions, blocked_by)
+
+    if decision.get("confidence") is not None and float(decision.get("confidence") or 0.0) < config.min_confidence:
+        blocked_by.append("confidence_below_threshold")
+
+    if action in REDUCE_ONLY_ACTIONS:
+        sanitized["reduce_only"] = True
+
+    required_orders = _required_protective_orders(decision) if action in OPEN_ACTIONS else []
+    approved = not blocked_by
+    risk_decision = RiskDecision(
+        approved=approved,
+        reason="approved" if approved else ",".join(sorted(set(blocked_by))),
+        blocked_by=sorted(set(blocked_by)),
+        sanitized_action=sanitized,
+        risk_notes=notes,
+        max_allowed_size=(config.default_max_allowed_size if approved else 0.0),
+        required_protective_orders=required_orders,
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+    if log_path is not None and not approved:
+        append_jsonl(log_path, {"event": "risk_reject", **risk_decision.to_dict()})
+    return risk_decision
+
+
+def append_jsonl(path: str | Path, row: dict[str, Any]) -> None:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def _check_environment(environment: dict[str, Any], blocked_by: list[str]) -> None:
+    runtime_mode = str(environment.get("runtime_mode") or environment.get("PHOENIX_RUNTIME_MODE") or "DRY_RUN").upper()
+    env = str(environment.get("env") or environment.get("PHOENIX_BINANCE_ENV") or "testnet").lower()
+    mainnet_live = bool(environment.get("mainnet_live", False)) or runtime_mode == "MAINNET_LIVE"
+    live_enabled = str(environment.get("PHOENIX_MAINNET_LIVE_ENABLED") or environment.get("mainnet_live_enabled") or "false").lower()
+    if mainnet_live or live_enabled in {"1", "true", "yes", "on"}:
+        blocked_by.append("mainnet_live_blocked")
+    if runtime_mode not in {"DRY_RUN", "SHADOW", "MAINNET_SHADOW", "TESTNET_LIVE", "TESTNET"}:
+        blocked_by.append("unsupported_runtime_mode")
+    if runtime_mode in {"TESTNET_LIVE", "TESTNET"} and env not in {"testnet", "demo"}:
+        blocked_by.append("testnet_env_required")
+    if env in {"prod", "mainnet"} and runtime_mode not in {"SHADOW", "MAINNET_SHADOW"}:
+        blocked_by.append("mainnet_env_blocked")
+
+
+def _check_loss_controls(
+    account_risk: dict[str, Any],
+    config: RiskGovernorConfig,
+    blocked_by: list[str],
+) -> None:
+    daily_remaining = _safe_float(account_risk.get("daily_loss_remaining_pct"), default=config.max_daily_loss_pct)
+    loss_streak = int(_safe_float(account_risk.get("loss_streak"), default=0) or 0)
+    if daily_remaining <= 0:
+        blocked_by.append("daily_loss_limit_hit")
+    if loss_streak >= config.loss_streak_lock:
+        blocked_by.append("loss_streak_lock")
+    if bool(account_risk.get("cooldown_active", False)):
+        blocked_by.append("cooldown_after_loss_active")
+
+
+def _check_position_safety(
+    decision: dict[str, Any],
+    positions: list[dict[str, Any]],
+    account_risk: dict[str, Any],
+    config: RiskGovernorConfig,
+    blocked_by: list[str],
+) -> None:
+    action = str(decision.get("action") or "").upper()
+    if action not in OPEN_ACTIONS:
+        return
+    symbol = str(decision.get("symbol") or "").upper()
+    open_count = int(_safe_float(account_risk.get("open_positions_count"), default=len(positions)) or len(positions))
+    max_open = int(_safe_float(account_risk.get("max_open_positions"), default=config.max_open_positions) or config.max_open_positions)
+    if open_count >= min(max_open, config.max_open_positions):
+        blocked_by.append("max_open_positions")
+    if any(str(item.get("symbol") or "").upper() == symbol for item in positions):
+        blocked_by.append("duplicate_position")
+    if bool(decision.get("averaging_down", False)):
+        blocked_by.append("averaging_down_blocked")
+    if bool(decision.get("martingale", False)):
+        blocked_by.append("martingale_blocked")
+    if bool(decision.get("increase_size_after_loss", False)):
+        blocked_by.append("increase_size_after_loss_blocked")
+    margin_type = str(decision.get("margin_type") or "ISOLATED").upper()
+    if margin_type != "ISOLATED":
+        blocked_by.append("isolated_margin_required")
+
+
+def _check_direction(
+    decision: dict[str, Any],
+    market_regime: dict[str, Any],
+    candidate: dict[str, Any] | None,
+    config: RiskGovernorConfig,
+    blocked_by: list[str],
+    notes: list[str],
+) -> None:
+    action = str(decision.get("action") or "").upper()
+    if action not in OPEN_ACTIONS:
+        return
+    lock = str(market_regime.get("direction_lock") or "BOTH_ALLOWED").upper()
+    setup_type = str(decision.get("trade_type") or (candidate or {}).get("setup_type") or "").upper()
+    is_micro_scalp = setup_type == "QUICK_TRADE" and bool(decision.get("size_reduced", False))
+    if lock == "NO_TRADE":
+        blocked_by.append("direction_lock_no_trade")
+    if action == "ENTER_SHORT" and lock == "LONG_ONLY_OR_NO_TRADE" and not is_micro_scalp:
+        blocked_by.append("direction_lock_conflict")
+    if action == "ENTER_LONG" and lock == "SHORT_ONLY_OR_NO_TRADE" and not is_micro_scalp:
+        blocked_by.append("direction_lock_conflict")
+    if is_micro_scalp:
+        notes.append(f"micro_scalp_size_multiplier={config.reduced_size_multiplier}")
+
+
+def _check_execution_quality(
+    candidate: dict[str, Any] | None,
+    action: str,
+    config: RiskGovernorConfig,
+    blocked_by: list[str],
+) -> None:
+    if action not in OPEN_ACTIONS:
+        return
+    if candidate is None:
+        blocked_by.append("candidate_state_unknown")
+        return
+    spread = _safe_float(candidate.get("spread_bps"))
+    slippage = _safe_float(candidate.get("estimated_slippage_bps"))
+    if candidate.get("liquidity_ok") is False:
+        blocked_by.append("liquidity_too_poor")
+    if spread is None or spread > config.max_spread_bps:
+        blocked_by.append("spread_too_wide")
+    if slippage is None or slippage > config.max_slippage_bps:
+        blocked_by.append("slippage_too_high")
+
+
+def _check_stop_protection(
+    decision: dict[str, Any],
+    action: str,
+    positions: list[dict[str, Any]],
+    blocked_by: list[str],
+) -> None:
+    if action in OPEN_ACTIONS:
+        if decision.get("stop_loss_pct") in (None, "") and decision.get("stop_loss_price") in (None, ""):
+            blocked_by.append("missing_stop_loss")
+        return
+
+    if action in REDUCE_ONLY_ACTIONS:
+        symbol = str(decision.get("symbol") or "").upper()
+        known = [item for item in positions if str(item.get("symbol") or "").upper() == symbol]
+        if not known:
+            blocked_by.append("position_state_unknown")
+        for item in known:
+            if str(item.get("protection_status") or "").lower() in {"unknown", "failed", "missing"}:
+                blocked_by.append("stop_order_status_unknown")
+
+
+def _required_protective_orders(decision: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "type": "exchange_side_stop_loss",
+            "symbol": decision.get("symbol"),
+            "stop_loss_pct": decision.get("stop_loss_pct"),
+            "stop_loss_price": decision.get("stop_loss_price"),
+            "reduce_only": True,
+        }
+    ]
+
+
+def _candidate_for_symbol(snapshot: dict[str, Any], symbol: str) -> dict[str, Any] | None:
+    for item in snapshot.get("top_candidates") or []:
+        if str(item.get("symbol") or "").upper() == symbol:
+            return item
+    return None
+
+
+def _safe_float(value: Any, *, default: float | None = None) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
