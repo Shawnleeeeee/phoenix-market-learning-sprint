@@ -1,0 +1,58 @@
+{
+  "allowed_liquidity_buckets": [
+    "ultra_liquid",
+    "high_liquidity",
+    "medium_liquidity"
+  ],
+  "allowed_regimes": [
+    "failed_breakout",
+    "mean_reversion_after_forced_flow"
+  ],
+  "blocked_regimes": [
+    "strong_trend_continuation",
+    "liquidity_void"
+  ],
+  "blocked_symbols": [],
+  "created_at": "2026-05-08T00:00:00+00:00",
+  "edge_source": "failed_open_interest_build_reversal",
+  "entry_conditions": [
+    "oi build expands but price follow-through fails",
+    "orderbook_imbalance flips against breakout direction",
+    "expected reversal move remains larger than total cost"
+  ],
+  "evidence_level": 0,
+  "exit_logic": [
+    "reversal target",
+    "fakeout invalidation failure",
+    "time stop"
+  ],
+  "expected_gross_move_bps": null,
+  "expected_holding_horizon_sec": [
+    180,
+    900
+  ],
+  "family": "oi_build",
+  "invalidation_conditions": [
+    "breakout resumes with new volume burst",
+    "HMM or Markov regime shifts to continuation",
+    "spread or slippage destroys net edge"
+  ],
+  "market_hypothesis": "When open interest builds into a breakout but price fails and orderbook pressure flips, trapped breakout flow may unwind quickly enough to create a cost-adjusted reversal opportunity.",
+  "max_expected_total_cost_bps": null,
+  "min_cost_to_edge_ratio": null,
+  "min_expected_net_edge_bps": null,
+  "old_strategy_similarity": {
+    "change_type": "new_hypothesis",
+    "is_similar": false,
+    "similar_to": []
+  },
+  "replay_evidence": {},
+  "shadow_evidence": {},
+  "status": "shadow_only",
+  "strategy_id": "oi_build_fakeout_reversal",
+  "testnet_evidence": {},
+  "trigger_event": "oi_build_failed_breakout",
+  "updated_at": "2026-05-08T00:00:00+00:00",
+  "version": "v0.1",
+  "who_loses_money": "trapped breakout participants whose positions unwind after failed continuation"
+}

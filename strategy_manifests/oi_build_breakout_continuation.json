@@ -1,0 +1,57 @@
+{
+  "allowed_liquidity_buckets": [
+    "ultra_liquid",
+    "high_liquidity"
+  ],
+  "allowed_regimes": [
+    "trend",
+    "momentum_continuation"
+  ],
+  "blocked_regimes": [
+    "range_chop",
+    "liquidity_void"
+  ],
+  "blocked_symbols": [],
+  "created_at": "2026-05-08T00:00:00+00:00",
+  "edge_source": "open_interest_build_with_price_follow_through",
+  "entry_conditions": [
+    "oi_delta_5m and oi_delta_15m show sustained build",
+    "price_breakout_strength confirms follow-through",
+    "spread_bps and slippage_bps stay below cost gate limits"
+  ],
+  "evidence_level": 0,
+  "exit_logic": [
+    "time stop",
+    "follow-through failure invalidation",
+    "cost-aware stop when spread or slippage expands"
+  ],
+  "expected_gross_move_bps": null,
+  "expected_holding_horizon_sec": [
+    300,
+    1800
+  ],
+  "family": "oi_build",
+  "invalidation_conditions": [
+    "oi build fails to produce price continuation",
+    "spread expands beyond expected net edge",
+    "BTC or ETH regime flips risk-off"
+  ],
+  "market_hypothesis": "When open interest builds with confirmed price breakout and acceptable execution cost, forced continuation flow may persist long enough to overcome fee, spread, slippage, and funding.",
+  "max_expected_total_cost_bps": null,
+  "min_cost_to_edge_ratio": null,
+  "min_expected_net_edge_bps": null,
+  "old_strategy_similarity": {
+    "change_type": "new_hypothesis",
+    "is_similar": false,
+    "similar_to": []
+  },
+  "replay_evidence": {},
+  "shadow_evidence": {},
+  "status": "shadow_only",
+  "strategy_id": "oi_build_breakout_continuation",
+  "testnet_evidence": {},
+  "trigger_event": "oi_build_breakout_confirmation",
+  "updated_at": "2026-05-08T00:00:00+00:00",
+  "version": "v0.1",
+  "who_loses_money": "late breakout participants and forced hedgers who cross the spread after confirmation"
+}

@@ -1,0 +1,57 @@
+{
+  "allowed_liquidity_buckets": [
+    "ultra_liquid",
+    "high_liquidity"
+  ],
+  "allowed_regimes": [
+    "trend",
+    "depth_supported_continuation"
+  ],
+  "blocked_regimes": [
+    "thin_liquidity",
+    "range_chop"
+  ],
+  "blocked_symbols": [],
+  "created_at": "2026-05-08T00:00:00+00:00",
+  "edge_source": "bidwall_supported_open_interest_build",
+  "entry_conditions": [
+    "bidwall_strength supports the breakout side",
+    "oi_delta_5m confirms position build",
+    "orderbook_imbalance does not show immediate absorption"
+  ],
+  "evidence_level": 0,
+  "exit_logic": [
+    "bidwall support failure",
+    "orderbook imbalance reversal",
+    "time stop"
+  ],
+  "expected_gross_move_bps": null,
+  "expected_holding_horizon_sec": [
+    300,
+    1800
+  ],
+  "family": "oi_build",
+  "invalidation_conditions": [
+    "bidwall disappears before entry",
+    "askwall blocks continuation",
+    "slippage exceeds cost gate"
+  ],
+  "market_hypothesis": "When a visible bidwall supports an open-interest build during breakout continuation, short-term forced flow may have enough room to overcome execution cost.",
+  "max_expected_total_cost_bps": null,
+  "min_cost_to_edge_ratio": null,
+  "min_expected_net_edge_bps": null,
+  "old_strategy_similarity": {
+    "change_type": "new_hypothesis",
+    "is_similar": false,
+    "similar_to": []
+  },
+  "replay_evidence": {},
+  "shadow_evidence": {},
+  "status": "shadow_only",
+  "strategy_id": "bidwall_oi_build_continuation",
+  "testnet_evidence": {},
+  "trigger_event": "bidwall_oi_build_confirmation",
+  "updated_at": "2026-05-08T00:00:00+00:00",
+  "version": "v0.1",
+  "who_loses_money": "participants forced to chase continuation after depth-supported breakout"
+}

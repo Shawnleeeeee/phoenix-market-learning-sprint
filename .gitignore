@@ -1,6 +1,9 @@
 __pycache__/
 *.py[cod]
 *.pyo
+*.bak*
+*.before
+vps_sync_tmp/
 
 .env
 .env.*
@@ -19,3 +22,20 @@ id_ed25519*
 
 .DS_Store
 Thumbs.db
+
+# Phoenix runtime data and generated operational artifacts
+logs/
+state/
+backups/
+deploy_backups/
+.deploy_tmp/
+.tmp/
+round_runner_reports*/
+signal_lab_runs/
+signal_lab_replay/
+analyst_exports/
+analyst_reports/
+hermes_exports/
+hermes_inbox/
+hermes_reports/
+phoenix_reports/__pycache__/

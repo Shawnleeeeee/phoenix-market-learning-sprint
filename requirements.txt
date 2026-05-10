@@ -1,0 +1,3 @@
+aiohttp>=3.13,<4
+binance-connector>=3.12,<4
+pandas>=2.2,<3
