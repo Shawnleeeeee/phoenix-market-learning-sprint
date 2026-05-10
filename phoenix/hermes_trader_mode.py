@@ -145,6 +145,7 @@ async def run_trader_cycle_async(
     _append_event(output, "execution_intent", trace, execution_intent)
     _append_event(output, "execution_result", trace, execution_result)
     _append_event(output, "review_report", trace, review.to_dict())
+    cycle_state = _cycle_state_from_gateway(gateway.to_dict(), execution_result)
 
     return {
         "trace_id": trace,
@@ -157,9 +158,7 @@ async def run_trader_cycle_async(
         "execution_result": execution_result,
         "review_report": review.to_dict(),
         "output_dir": str(output),
-        "frozen": bool(execution_result.get("frozen", False)) or (testnet_order_mode and not risk_result.get("approved", False)),
-        "freeze_reason": execution_result.get("freeze_reason") or (risk_result.get("reason") if testnet_order_mode and not risk_result.get("approved", False) else None),
-        "can_continue": bool(execution_result.get("can_continue", not bool(execution_result.get("frozen", False)))),
+        **cycle_state,
     }
 
 
@@ -492,6 +491,7 @@ def _frozen_cycle_result(
         "frozen": True,
         "freeze_reason": freeze_reason,
         "can_continue": False,
+        "result_type": "hard_freeze",
         "executor_called": False,
     }
     gateway_result = {
@@ -500,6 +500,7 @@ def _frozen_cycle_result(
         "blocked_by": list(dict.fromkeys(blocked_by)),
         "source": "HERMES",
         "reason": freeze_reason,
+        "result_type": "hard_freeze",
         "normalized_decision": raw_decision,
         "validation_result": {"valid": False, "reasons": list(dict.fromkeys(blocked_by)), "decision": raw_decision, "rejectable": True},
         "risk_governor_result": risk_result,
@@ -508,7 +509,10 @@ def _frozen_cycle_result(
         "review_report": None,
         "created_at": created_at,
     }
-    review = build_review_report("RISK_REJECT", {"action": raw_decision.get("action"), "symbol": raw_decision.get("symbol"), "blocked_by": blocked_by, "reason": freeze_reason})
+    review = build_review_report(
+        "HARD_FREEZE",
+        {"action": raw_decision.get("action"), "symbol": raw_decision.get("symbol"), "blocked_by": blocked_by, "reason": freeze_reason, "freeze_reason": freeze_reason},
+    )
     _append_event(output, "snapshot", trace_id, {"payload": snapshot})
     _append_event(output, "hermes_decision_raw", trace_id, {"decision": raw_decision, "fallback_reason": freeze_reason})
     _append_event(output, "hermes_decision_validated", trace_id, gateway_result["validation_result"])
@@ -537,6 +541,7 @@ def _frozen_cycle_result(
         "frozen": True,
         "freeze_reason": freeze_reason,
         "can_continue": False,
+        "result_type": "hard_freeze",
     }
 
 
@@ -551,8 +556,32 @@ def _should_allow_executor_callback(
     return str(decision.get("action") or "").upper() in OPEN_ACTIONS
 
 
+def _cycle_state_from_gateway(gateway: dict[str, Any], execution_result: dict[str, Any]) -> dict[str, Any]:
+    result_type = str(execution_result.get("result_type") or gateway.get("result_type") or "completed")
+    frozen = bool(execution_result.get("frozen", result_type == "hard_freeze"))
+    can_continue = bool(execution_result.get("can_continue", not frozen))
+    if frozen and can_continue:
+        can_continue = False
+    if not frozen and not can_continue and result_type != "completed":
+        can_continue = True
+    freeze_reason = execution_result.get("freeze_reason") if frozen else None
+    if frozen and not freeze_reason:
+        freeze_reason = gateway.get("reason") or "hard_freeze"
+    return {
+        "result_type": result_type,
+        "frozen": frozen,
+        "freeze_reason": freeze_reason,
+        "can_continue": can_continue,
+    }
+
+
 def _review_type(approved: bool, decision: dict[str, Any], execution_result: dict[str, Any]) -> str:
     action = str(decision.get("action") or "").upper()
+    result_type = str(execution_result.get("result_type") or "").lower()
+    if result_type == "hard_freeze":
+        return "HARD_FREEZE"
+    if result_type == "soft_reject":
+        return "SOFT_REJECT"
     if action == "NO_TRADE":
         return "NO_TRADE"
     if not approved:
@@ -601,6 +630,7 @@ def _cycle_summary(result: dict[str, Any]) -> dict[str, Any]:
         "blocked_by": gateway.get("blocked_by"),
         "order_submitted": execution.get("order_submitted"),
         "execution_status": execution.get("status"),
+        "result_type": result.get("result_type") or execution.get("result_type") or gateway.get("result_type"),
         "frozen": bool(result.get("frozen", False) or execution.get("frozen", False)),
         "freeze_reason": result.get("freeze_reason") or execution.get("freeze_reason"),
         "can_continue": result.get("can_continue"),

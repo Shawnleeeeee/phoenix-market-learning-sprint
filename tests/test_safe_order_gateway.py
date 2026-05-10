@@ -244,6 +244,8 @@ class SafeOrderGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(gateway.approved)
         self.assertFalse(gateway.execution_result["order_submitted"])
         self.assertTrue(gateway.execution_result["frozen"])
+        self.assertEqual(gateway.execution_result["result_type"], "hard_freeze")
+        self.assertFalse(gateway.execution_result["can_continue"])
         self.assertEqual(gateway.execution_result["freeze_reason"], "executor_callback_exception")
         self.assertFalse(gateway.execution_result["can_continue"])
 

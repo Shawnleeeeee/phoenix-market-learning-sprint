@@ -170,6 +170,7 @@ class TestnetExecutorCallback:
                     executor=executor,
                     environment_name=environment.name,
                     risk_log_path=risk_log_path,
+                    source_snapshot=self.snapshot,
                 )
                 freeze_reason = "protective_stop_failed" if emergency.get("ok") else "emergency_close_failed"
                 return {
@@ -177,6 +178,7 @@ class TestnetExecutorCallback:
                     "frozen": True,
                     "can_continue": False,
                     "freeze_reason": freeze_reason,
+                    "result_type": "hard_freeze",
                     "status": "protective_stop_failed_emergency_close_attempted",
                     "entry_response": entry_response,
                     "protective_stop_error": str(exc),
@@ -187,6 +189,7 @@ class TestnetExecutorCallback:
             "order_submitted": True,
             "frozen": False,
             "can_continue": True,
+            "result_type": "completed",
             "status": "testnet_order_submitted_with_protective_stop",
             "entry_response": entry_response,
             "protective_stop_response": stop_response,
@@ -292,10 +295,12 @@ def _trusted_snapshot_with_signed_state(
     emergency_close_capability_source: str,
     require_symbol: str | None = None,
 ) -> dict[str, Any]:
+    source_status = source_snapshot.get("system_status") if isinstance(source_snapshot, dict) else {}
+    source_status = source_status if isinstance(source_status, dict) else {}
     snapshot = {
         **source_snapshot,
         "account_risk": dict(source_snapshot.get("account_risk") or {}),
-        "system_status": dict(source_snapshot.get("system_status") or {}),
+        "system_status": dict(source_status),
         "current_positions": [_position_from_exchange(item) for item in positions_payload if _is_open_position(item)],
     }
     if require_symbol and not any(str(item.get("symbol") or "").upper() == require_symbol.upper() for item in snapshot["current_positions"]):
@@ -303,13 +308,24 @@ def _trusted_snapshot_with_signed_state(
     snapshot["account_risk"]["open_positions_count"] = len(snapshot["current_positions"])
     snapshot["account_risk"]["trading_allowed"] = snapshot["account_risk"].get("trading_allowed", True)
     compact = _compact_account_state(account_payload)
-    exchange_status = "healthy" if isinstance(exchange_payload, dict) and exchange_payload.get("symbols") else "unknown"
+    exchange_healthy = isinstance(exchange_payload, dict) and bool(exchange_payload.get("symbols"))
+    exchange_status = "healthy" if exchange_healthy else "unknown"
+    trusted_runtime_snapshot = (
+        source_status.get("trusted_runtime_snapshot") is True
+        and source_status.get("data_fresh") is True
+        and str(source_status.get("websocket_status") or "").strip().lower() == "healthy"
+        and exchange_healthy
+        and protective_stop_path_available
+        and emergency_close_available
+        and _verified_capability(protective_stop_capability_source)
+        and _verified_capability(emergency_close_capability_source)
+    )
     snapshot["account_risk"]["available_balance_usdt"] = compact.get("available_balance_usdt")
     snapshot["system_status"].update(
         {
             "source": "runtime",
             "snapshot_source": "runtime",
-            "trusted_runtime_snapshot": True,
+            "trusted_runtime_snapshot": trusted_runtime_snapshot,
             "account_state_source": "signed_account",
             "account_source": "signed_account",
             "position_state_source": "signed_positions",
@@ -319,8 +335,8 @@ def _trusted_snapshot_with_signed_state(
             "protective_stop_capability_source": protective_stop_capability_source,
             "emergency_close_available": bool(emergency_close_available),
             "emergency_close_capability_source": emergency_close_capability_source,
-            "can_continue": True,
-            "freeze_reason": None,
+            "can_continue": trusted_runtime_snapshot,
+            "freeze_reason": None if trusted_runtime_snapshot else "runtime_snapshot_not_trusted_for_testnet_order",
         }
     )
     return snapshot
@@ -334,7 +350,30 @@ async def _attempt_emergency_close(
     executor: PhoenixExecutor,
     environment_name: str,
     risk_log_path: Path,
+    source_snapshot: dict[str, Any],
 ) -> dict[str, Any]:
+    status = source_snapshot.get("system_status") if isinstance(source_snapshot, dict) else {}
+    status = status if isinstance(status, dict) else {}
+    emergency_close_verified = status.get("emergency_close_available") is True and _verified_capability(
+        status.get("emergency_close_capability_source")
+    )
+    if not emergency_close_verified:
+        return {"ok": False, "error": "emergency_close_unverified"}
+    try:
+        account_payload, positions_payload, exchange_payload = await _fetch_required_account_position_exchange_state(futures)
+        emergency_snapshot = _trusted_snapshot_with_signed_state(
+            source_snapshot,
+            account_payload=account_payload,
+            positions_payload=positions_payload,
+            exchange_payload=exchange_payload,
+            protective_stop_path_available=status.get("protective_stop_path_available") is True,
+            emergency_close_available=emergency_close_verified,
+            protective_stop_capability_source=str(status.get("protective_stop_capability_source") or "unverified"),
+            emergency_close_capability_source=str(status.get("emergency_close_capability_source") or "unverified"),
+            require_symbol=intent.symbol,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"emergency_close_runtime_state_unavailable:{exc}"}
     exit_side = "SELL" if intent.side == "BUY" else "BUY"
     hedge_mode = False
     exit_position_side = executor._exit_position_side(intent.side, hedge_mode=hedge_mode)
@@ -351,7 +390,7 @@ async def _attempt_emergency_close(
         response = await submit_binance_order_intent(
             futures,
             payload,
-            snapshot=_emergency_snapshot(intent),
+            snapshot=emergency_snapshot,
             environment=_testnet_gateway_environment(environment_name),
             source="hermes_trader_mode:emergency_close",
             purpose="emergency",
@@ -359,52 +398,13 @@ async def _attempt_emergency_close(
             dry_run=False,
             audit_log_path=risk_log_path,
             extra_context={
-                "protective_stop_path_available": True,
-                "emergency_close_path_available": True,
+                "protective_stop_path_available": status.get("protective_stop_path_available") is True,
+                "emergency_close_path_available": emergency_close_verified,
             },
         )
         return {"ok": True, "payload": response}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc)}
-
-
-def _emergency_snapshot(intent: TradeIntent) -> dict[str, Any]:
-    now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
-    return {
-        "market_regime": {"regime": "UNKNOWN", "direction_lock": "BOTH_ALLOWED"},
-        "account_risk": {
-            "trading_allowed": True,
-            "daily_pnl_pct": 0.0,
-            "daily_loss_remaining_pct": 3.0,
-            "open_positions_count": 1,
-            "max_open_positions": 1,
-            "loss_streak": 0,
-            "cooldown_active": False,
-            "reason_if_blocked": None,
-        },
-        "current_positions": [{"symbol": intent.symbol, "side": "LONG" if intent.side == "BUY" else "SHORT", "protection_status": "healthy"}],
-        "top_candidates": [],
-        "system_status": {
-            "snapshot_time": now,
-            "data_fresh": True,
-            "websocket_status": "healthy",
-            "exchange_status": "healthy",
-            "testnet_only": True,
-            "source": "runtime",
-            "snapshot_source": "runtime",
-            "trusted_runtime_snapshot": True,
-            "account_state_source": "signed_account",
-            "position_state_source": "signed_positions",
-            "position_state": "known",
-            "stop_protection_status": "healthy",
-            "candidate_state": "known",
-            "protective_stop_path_available": True,
-            "protective_stop_capability_source": "emergency_reduce_only_close",
-            "emergency_close_available": True,
-            "emergency_close_capability_source": "emergency_reduce_only_close",
-        },
-    }
-
 
 def _testnet_gateway_environment(environment_name: str) -> dict[str, Any]:
     return {
@@ -421,6 +421,7 @@ def _frozen_executor_result(reason: str, *, executor_stage: str) -> dict[str, An
         "frozen": True,
         "can_continue": False,
         "freeze_reason": reason,
+        "result_type": "hard_freeze",
         "status": "frozen_before_testnet_order",
         "executor_stage": executor_stage,
     }

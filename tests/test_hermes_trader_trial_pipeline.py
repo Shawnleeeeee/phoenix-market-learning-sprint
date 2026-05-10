@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 import tempfile
 import unittest
@@ -12,6 +13,7 @@ from phoenix.hermes_trader_mode import run_trader_cycle
 from phoenix.review_reporter import build_review_report
 from phoenix.risk_governor import evaluate_risk
 from phoenix.testnet_executor_callback import TestnetExecutorCallback
+import phoenix.testnet_executor_callback as testnet_executor_callback
 from phoenix.trader_snapshot import build_trader_snapshot
 from phoenix.trader_snapshot_runtime import build_runtime_trader_snapshot
 
@@ -114,13 +116,15 @@ class FakeTrialFutures:
         self.new_order_calls = []
         self.conditional_calls = []
         self.account_api_mode = "classic"
+        self.positions = []
 
     async def account_overview(self):
         return [{"asset": "USDT", "availableBalance": "1000", "balance": "1000"}]
 
     async def position_information_v3(self, symbol=None):
-        del symbol
-        return []
+        if symbol:
+            return [item for item in self.positions if item.get("symbol") == symbol]
+        return list(self.positions)
 
     async def get_account_api_mode(self):
         return self.account_api_mode
@@ -150,6 +154,21 @@ class FakeTrialFutures:
         if payload.get("reduceOnly") == "true" and self.fail_emergency:
             raise RuntimeError("emergency close failed")
         self.new_order_calls.append(dict(payload))
+        if payload.get("reduceOnly") == "true":
+            self.positions = [item for item in self.positions if item.get("symbol") != payload.get("symbol")]
+        else:
+            quantity = str(payload.get("quantity") or "0.001")
+            amount = quantity if payload.get("side") == "BUY" else f"-{quantity}"
+            self.positions = [
+                {
+                    "symbol": payload.get("symbol"),
+                    "positionAmt": amount,
+                    "entryPrice": "100",
+                    "markPrice": "100",
+                    "unRealizedProfit": "0",
+                    "protection_status": "healthy",
+                }
+            ]
         return {"orderId": len(self.new_order_calls), **payload}
 
     async def new_conditional_order(self, payload):
@@ -157,6 +176,12 @@ class FakeTrialFutures:
         if self.fail_stop:
             raise RuntimeError("protective stop failed")
         return {"algoId": len(self.conditional_calls), **payload}
+
+
+class FakeNoEmergencyPositionFutures(FakeTrialFutures):
+    async def position_information_v3(self, symbol=None):
+        del symbol
+        return []
 
 
 class HermesTraderTrialPipelineTests(unittest.TestCase):
@@ -276,6 +301,8 @@ class HermesTraderTrialPipelineTests(unittest.TestCase):
             self.assertEqual(calls, [])
             self.assertTrue(result["frozen"])
             self.assertEqual(result["freeze_reason"], "manual_snapshot_not_allowed_for_testnet_order_mode")
+            self.assertEqual(result["result_type"], "hard_freeze")
+            self.assertFalse(result["can_continue"])
             self.assertFalse(result["execution_result"]["order_submitted"])
 
     def test_dry_run_mode_manual_snapshot_is_allowed(self) -> None:
@@ -289,6 +316,7 @@ class HermesTraderTrialPipelineTests(unittest.TestCase):
             )
 
             self.assertFalse(result.get("frozen", False))
+            self.assertEqual(result["result_type"], "approved_dry_run")
             self.assertTrue(result["risk_governor_result"]["approved"])
             self.assertFalse(result["execution_result"]["order_submitted"])
 
@@ -330,6 +358,7 @@ class HermesTraderTrialPipelineTests(unittest.TestCase):
 
             self.assertEqual(len(calls), 1)
             self.assertFalse(result.get("frozen", False))
+            self.assertEqual(result["result_type"], "completed")
             self.assertTrue(result["risk_governor_result"]["approved"])
             self.assertTrue(result["execution_result"]["order_submitted"])
 
@@ -354,6 +383,94 @@ class HermesTraderTrialPipelineTests(unittest.TestCase):
             self.assertFalse(result["risk_governor_result"]["approved"])
             self.assertFalse(result["execution_result"]["order_submitted"])
 
+    def test_spread_too_wide_is_soft_reject_and_trial_can_continue(self) -> None:
+        calls = []
+        snapshot = trusted_runtime_snapshot()
+        snapshot["top_candidates"][0]["spread_bps"] = 50.0
+
+        with tempfile.TemporaryDirectory() as tmp:
+            result = run_trader_cycle(
+                snapshot_builder=lambda: snapshot,
+                decision_provider=MockHermesDecisionProvider(valid_enter_long()),
+                output_dir=tmp,
+                dry_run=False,
+                environment={"runtime_mode": "TESTNET_LIVE", "env": "testnet"},
+                executor_callback=lambda intent: calls.append(intent),
+            )
+
+            self.assertEqual(calls, [])
+            self.assertEqual(result["result_type"], "soft_reject")
+            self.assertFalse(result["frozen"])
+            self.assertTrue(result["can_continue"])
+            self.assertIsNone(result["freeze_reason"])
+
+    def test_direction_lock_conflict_is_soft_reject_and_trial_can_continue(self) -> None:
+        snapshot = trusted_runtime_snapshot()
+        snapshot["market_regime"]["direction_lock"] = "SHORT_ONLY_OR_NO_TRADE"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            result = run_trader_cycle(
+                snapshot_builder=lambda: snapshot,
+                decision_provider=MockHermesDecisionProvider(valid_enter_long()),
+                output_dir=tmp,
+                dry_run=False,
+                environment={"runtime_mode": "TESTNET_LIVE", "env": "testnet"},
+                executor_callback=lambda intent: {"order_submitted": True},
+            )
+
+            self.assertEqual(result["result_type"], "soft_reject")
+            self.assertFalse(result["frozen"])
+            self.assertTrue(result["can_continue"])
+
+    def test_cooldown_active_is_soft_reject_and_trial_can_continue(self) -> None:
+        snapshot = trusted_runtime_snapshot()
+        snapshot["account_risk"]["cooldown_active"] = True
+
+        with tempfile.TemporaryDirectory() as tmp:
+            result = run_trader_cycle(
+                snapshot_builder=lambda: snapshot,
+                decision_provider=MockHermesDecisionProvider(valid_enter_long()),
+                output_dir=tmp,
+                dry_run=False,
+                environment={"runtime_mode": "TESTNET_LIVE", "env": "testnet"},
+                executor_callback=lambda intent: {"order_submitted": True},
+            )
+
+            self.assertEqual(result["result_type"], "soft_reject")
+            self.assertFalse(result["frozen"])
+            self.assertTrue(result["can_continue"])
+
+    def test_stale_snapshot_is_hard_freeze_and_trial_stops(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = run_trader_cycle(
+                snapshot_builder=lambda: trusted_runtime_snapshot(data_fresh=False, trusted_runtime_snapshot=False),
+                decision_provider=MockHermesDecisionProvider(valid_enter_long()),
+                output_dir=tmp,
+                dry_run=False,
+                environment={"runtime_mode": "TESTNET_LIVE", "env": "testnet"},
+                executor_callback=lambda intent: {"order_submitted": True},
+            )
+
+            self.assertEqual(result["result_type"], "hard_freeze")
+            self.assertTrue(result["frozen"])
+            self.assertFalse(result["can_continue"])
+            self.assertIn("stale_snapshot", result["safe_order_gateway_result"]["blocked_by"])
+
+    def test_exchange_unknown_is_hard_freeze_and_trial_stops(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = run_trader_cycle(
+                snapshot_builder=lambda: trusted_runtime_snapshot(exchange_status="unknown", trusted_runtime_snapshot=False),
+                decision_provider=MockHermesDecisionProvider(valid_enter_long()),
+                output_dir=tmp,
+                dry_run=False,
+                environment={"runtime_mode": "TESTNET_LIVE", "env": "testnet"},
+                executor_callback=lambda intent: {"order_submitted": True},
+            )
+
+            self.assertEqual(result["result_type"], "hard_freeze")
+            self.assertTrue(result["frozen"])
+            self.assertFalse(result["can_continue"])
+
     def test_protective_stop_unavailable_rejects_entry(self) -> None:
         calls = []
 
@@ -377,6 +494,8 @@ class HermesTraderTrialPipelineTests(unittest.TestCase):
 
             self.assertEqual(calls, [])
             self.assertTrue(result["frozen"])
+            self.assertEqual(result["result_type"], "hard_freeze")
+            self.assertFalse(result["can_continue"])
             self.assertIn("protective_stop", result["freeze_reason"])
 
     def test_emergency_close_unavailable_rejects_entry(self) -> None:
@@ -395,6 +514,8 @@ class HermesTraderTrialPipelineTests(unittest.TestCase):
             )
 
             self.assertTrue(result["frozen"])
+            self.assertEqual(result["result_type"], "hard_freeze")
+            self.assertFalse(result["can_continue"])
             self.assertIn("emergency_close", result["freeze_reason"])
 
     def test_executor_callback_cannot_fabricate_healthy_snapshot(self) -> None:
@@ -409,6 +530,7 @@ class HermesTraderTrialPipelineTests(unittest.TestCase):
 
             self.assertFalse(result["order_submitted"])
             self.assertTrue(result["frozen"])
+            self.assertEqual(result["result_type"], "hard_freeze")
             self.assertEqual(result["freeze_reason"], "manual_snapshot_not_allowed_for_testnet_order_mode")
 
     def test_protective_stop_failed_emergency_close_success_freezes_trial(self) -> None:
@@ -434,6 +556,7 @@ class HermesTraderTrialPipelineTests(unittest.TestCase):
 
             self.assertTrue(result["order_submitted"])
             self.assertTrue(result["frozen"])
+            self.assertEqual(result["result_type"], "hard_freeze")
             self.assertEqual(result["freeze_reason"], "protective_stop_failed")
             self.assertTrue(result["emergency_close"]["ok"])
             self.assertFalse(result["can_continue"])
@@ -460,9 +583,72 @@ class HermesTraderTrialPipelineTests(unittest.TestCase):
             )
 
             self.assertTrue(result["frozen"])
+            self.assertEqual(result["result_type"], "hard_freeze")
             self.assertEqual(result["freeze_reason"], "emergency_close_failed")
             self.assertFalse(result["emergency_close"]["ok"])
             self.assertFalse(result["can_continue"])
+
+    def test_emergency_close_without_real_position_state_hard_freezes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = FakeNoEmergencyPositionFutures(fail_stop=True)
+            callback = TestnetExecutorCallback(
+                snapshot=trusted_runtime_snapshot(),
+                output_dir=tmp,
+                client_factory=lambda _session: fake,
+            )
+
+            result = asyncio.run(
+                callback(
+                    {
+                        "action": "ENTER_LONG",
+                        "symbol": "BTCUSDT",
+                        "side": "BUY",
+                        "raw_intent": valid_enter_long(),
+                        "required_protective_orders": [{}],
+                    }
+                )
+            )
+
+            self.assertTrue(result["frozen"])
+            self.assertEqual(result["result_type"], "hard_freeze")
+            self.assertEqual(result["freeze_reason"], "emergency_close_failed")
+            self.assertFalse(result["emergency_close"]["ok"])
+            self.assertIn("emergency_close_runtime_state_unavailable", result["emergency_close"]["error"])
+
+    def test_emergency_path_does_not_fabricate_healthy_snapshot(self) -> None:
+        source = inspect.getsource(testnet_executor_callback._attempt_emergency_close)
+
+        self.assertNotIn("_emergency_snapshot", source)
+        self.assertNotIn('"trusted_runtime_snapshot": True', source)
+        self.assertNotIn('"data_fresh": True', source)
+        self.assertNotIn('"websocket_status": "healthy"', source)
+        self.assertNotIn('"protective_stop_path_available": True', source)
+        self.assertNotIn('"emergency_close_available": True', source)
+
+    def test_no_contradictory_freeze_continue_state(self) -> None:
+        scenarios = [
+            run_trader_cycle(
+                snapshot_builder=lambda: trusted_runtime_snapshot(),
+                decision_provider=MockHermesDecisionProvider(valid_enter_long()),
+                output_dir=tempfile.mkdtemp(),
+                dry_run=False,
+                environment={"runtime_mode": "TESTNET_LIVE", "env": "testnet"},
+                executor_callback=lambda intent: {"order_submitted": True},
+            ),
+            run_trader_cycle(
+                snapshot_builder=lambda: trusted_runtime_snapshot(data_fresh=False, trusted_runtime_snapshot=False),
+                decision_provider=MockHermesDecisionProvider(valid_enter_long()),
+                output_dir=tempfile.mkdtemp(),
+                dry_run=False,
+                environment={"runtime_mode": "TESTNET_LIVE", "env": "testnet"},
+                executor_callback=lambda intent: {"order_submitted": True},
+            ),
+        ]
+
+        for result in scenarios:
+            self.assertFalse(result["frozen"] and result["can_continue"])
+            if not result["frozen"] and result["can_continue"] is False:
+                self.assertEqual(result["result_type"], "completed")
 
     def test_replay_log_contains_full_cycle_events_with_trace_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

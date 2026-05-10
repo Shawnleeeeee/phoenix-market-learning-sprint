@@ -36,6 +36,7 @@ class SafeOrderGatewayResult:
     blocked_by: list[str]
     source: str
     reason: str
+    result_type: str
     normalized_decision: dict[str, Any] | None
     validation_result: dict[str, Any]
     risk_governor_result: dict[str, Any]
@@ -110,6 +111,7 @@ async def submit_order_intent(
     execution_intent["approved_for_execution"] = approved
     execution_intent["required_protective_orders"] = risk_result.get("required_protective_orders") or []
     execution_intent["reason_if_not_approved"] = None if approved else risk_result.get("reason")
+    rejected_state = _classify_reject(risk_result.get("blocked_by") or validation.reasons or [])
     if approved and not dry_run and executor_callback is not None:
         try:
             callback_result = executor_callback(execution_intent)
@@ -136,6 +138,7 @@ async def submit_order_intent(
             "frozen": bool(callback_payload.get("frozen", False)),
             "can_continue": bool(callback_payload.get("can_continue", not bool(callback_payload.get("frozen", False)))),
             "freeze_reason": callback_payload.get("freeze_reason"),
+            "result_type": _result_type_from_callback(callback_payload),
             "payload": callback_payload,
         }
     else:
@@ -150,15 +153,22 @@ async def submit_order_intent(
             "status": status,
             "reason": None if approved else risk_result.get("reason"),
             "executor_called": False,
+            "frozen": False if approved else rejected_state["frozen"],
+            "can_continue": True if approved else rejected_state["can_continue"],
+            "freeze_reason": None if approved else rejected_state["freeze_reason"],
+            "result_type": "approved_dry_run" if approved and dry_run else ("approved_no_executor" if approved else rejected_state["result_type"]),
         }
 
-    review_type = _review_type(approved, normalized)
+    result_type = str((execution_result or {}).get("result_type") or ("approved" if approved else rejected_state["result_type"]))
+    review_type = _review_type(approved, normalized, result_type=result_type)
     review = build_review_report(
         review_type,
         {
             **normalized,
             "blocked_by": risk_result.get("blocked_by"),
             "reason": risk_result.get("reason"),
+            "result_type": result_type,
+            "freeze_reason": (execution_result or {}).get("freeze_reason"),
         },
     )
 
@@ -168,6 +178,7 @@ async def submit_order_intent(
         blocked_by=list(risk_result.get("blocked_by") or validation.reasons or []),
         source=source_name,
         reason="approved" if approved else str(risk_result.get("reason") or "blocked_before_execution"),
+        result_type=result_type,
         normalized_decision=validation.decision or normalized,
         validation_result=validation.to_dict(),
         risk_governor_result=risk_result,
@@ -660,7 +671,84 @@ def _is_conditional_endpoint(endpoint: str | None, payload: dict[str, Any]) -> b
     return "/conditional/" in endpoint_text or endpoint_text.endswith("/algoOrder") or bool(payload.get("algoType"))
 
 
-def _review_type(approved: bool, normalized: dict[str, Any]) -> str:
+SOFT_REJECT_BLOCKERS = {
+    "spread_too_wide",
+    "slippage_too_high",
+    "liquidity_too_poor",
+    "direction_lock_conflict",
+    "direction_lock_no_trade",
+    "cooldown_after_loss_active",
+    "loss_streak_lock",
+    "max_open_positions",
+    "duplicate_position",
+    "confidence_below_threshold",
+    "account_trading_blocked",
+}
+
+HARD_FREEZE_BLOCKERS = {
+    "mainnet_live_blocked",
+    "live_trading_enabled_blocked",
+    "mainnet_env_blocked",
+    "mainnet_shadow_order_endpoint_blocked",
+    "manual_snapshot_not_allowed_for_testnet_order_mode",
+    "untrusted_runtime_snapshot",
+    "stale_snapshot",
+    "snapshot_transport_unhealthy",
+    "websocket_status_unhealthy",
+    "exchange_status_unknown",
+    "missing_account_state",
+    "missing_position_state",
+    "position_state_unknown",
+    "stop_order_status_unknown",
+    "protective_stop_path_unavailable",
+    "protective_stop_path_unverified",
+    "emergency_close_unavailable",
+    "emergency_close_unverified",
+    "executor_callback_exception",
+    "daily_loss_limit_hit",
+}
+
+
+def _classify_reject(blocked_by: list[Any]) -> dict[str, Any]:
+    reasons = [str(item) for item in blocked_by if item]
+    hard = [reason for reason in reasons if reason in HARD_FREEZE_BLOCKERS]
+    if hard:
+        return {
+            "result_type": "hard_freeze",
+            "frozen": True,
+            "can_continue": False,
+            "freeze_reason": ",".join(sorted(set(hard))),
+        }
+    if reasons:
+        return {
+            "result_type": "soft_reject",
+            "frozen": False,
+            "can_continue": True,
+            "freeze_reason": None,
+        }
+    return {
+        "result_type": "approved",
+        "frozen": False,
+        "can_continue": True,
+        "freeze_reason": None,
+    }
+
+
+def _result_type_from_callback(callback_payload: dict[str, Any]) -> str:
+    if callback_payload.get("result_type"):
+        return str(callback_payload.get("result_type"))
+    if callback_payload.get("frozen"):
+        return "hard_freeze"
+    if callback_payload.get("order_submitted"):
+        return "completed"
+    return "soft_reject"
+
+
+def _review_type(approved: bool, normalized: dict[str, Any], *, result_type: str = "") -> str:
+    if result_type == "hard_freeze":
+        return "HARD_FREEZE"
+    if result_type == "soft_reject":
+        return "SOFT_REJECT"
     if str(normalized.get("action") or "").upper() == "NO_TRADE":
         return "NO_TRADE"
     if not approved:

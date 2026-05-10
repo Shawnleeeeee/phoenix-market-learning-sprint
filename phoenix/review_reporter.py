@@ -34,6 +34,8 @@ def build_review_report(report_type: str, payload: dict[str, Any]) -> ReviewRepo
         "RISK_ALERT": _risk_alert,
         "DAILY_SUMMARY": _daily_summary,
         "RISK_REJECT": _risk_reject,
+        "SOFT_REJECT": _soft_reject,
+        "HARD_FREEZE": _hard_freeze,
     }
     builder = builders.get(normalized, _risk_alert)
     return ReviewReport(
@@ -189,6 +191,52 @@ def _risk_reject(payload: dict[str, Any]) -> str:
             "Hermes 只可以提出建议，Risk Governor 拒绝后 Phoenix 唔会执行。",
         ]
     )
+
+
+def _soft_reject(payload: dict[str, Any]) -> str:
+    reasons = payload.get("blocked_by") or payload.get("reasons") or [payload.get("reason", "unknown")]
+    return "\n".join(
+        [
+            "【今轮唔交易】",
+            "",
+            f"原因：{_plain_reject_reason(reasons)}",
+            "状态：系统已放弃今轮交易，下一轮继续观察。",
+            "",
+            "说明：",
+            "呢个唔系系统故障，只系今轮条件唔够靓，Phoenix 无落单。",
+        ]
+    )
+
+
+def _hard_freeze(payload: dict[str, Any]) -> str:
+    reason = payload.get("freeze_reason") or payload.get("reason") or _join_reasons(payload.get("blocked_by"))
+    return "\n".join(
+        [
+            "【风险冻结】",
+            "",
+            f"原因：{reason}",
+            "状态：trial 已暂停，系统唔会继续落单，需要人工检查。",
+            "",
+            "说明：",
+            "呢个系安全状态唔可信，唔可以当普通唔交易处理。",
+        ]
+    )
+
+
+def _plain_reject_reason(value: Any) -> str:
+    reasons = value if isinstance(value, list) else [value]
+    text = ",".join(str(item) for item in reasons if item)
+    if "spread_too_wide" in text:
+        return "当前 spread 偏大，强行入场容易滑点。"
+    if "slippage_too_high" in text:
+        return "预计 slippage 偏高，今轮唔值得追。"
+    if "liquidity_too_poor" in text:
+        return "流动性唔够，落单质量唔稳定。"
+    if "direction_lock_conflict" in text:
+        return "方向同大盘锁定方向冲突，今轮唔做。"
+    if "cooldown_after_loss_active" in text:
+        return "冷静期仲未完，系统继续等下一轮。"
+    return _join_reasons(value)
 
 
 def _join_reasons(value: Any) -> str:
