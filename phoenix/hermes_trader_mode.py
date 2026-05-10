@@ -103,7 +103,7 @@ def main(argv: list[str] | None = None) -> int:
 
     snapshot = load_json_file(args.snapshot_file) if args.snapshot_file else None
     decision = load_json_file(args.decision_file) if args.decision_file else None
-    environment = {"runtime_mode": "TESTNET_LIVE" if args.testnet and not args.dry_run else "DRY_RUN", "env": "testnet"}
+    environment = {"runtime_mode": "TESTNET_LIVE" if args.testnet else "DRY_RUN", "env": "testnet"}
     result = run_trader_cycle(
         snapshot_payload=snapshot,
         decision_payload=decision,
