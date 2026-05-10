@@ -1,0 +1,236 @@
+{
+  "field_availability": [
+    {
+      "playbook": "shadow_oi_build_breakout_balanced",
+      "sample_relevant_keys": [
+        "factors.market_regime_bucket",
+        "factors.market_regime_score",
+        "factors.volatility_regime_bucket",
+        "factors.volatility_regime_score",
+        "outcome.after_fee_and_slippage_return_pct",
+        "outcome.estimated_slippage_bps",
+        "outcome.extra_slippage_penalty_pct",
+        "outcome.factors.market_regime_bucket",
+        "outcome.factors.market_regime_score",
+        "outcome.factors.volatility_regime_bucket",
+        "outcome.factors.volatility_regime_score",
+        "outcome.funding_paid_during_hold",
+        "outcome.funding_paid_source",
+        "outcome.funding_rate_at_entry",
+        "outcome.spread_bps_at_entry"
+      ]
+    },
+    {
+      "playbook": "shadow_oi_build_breakout_quality",
+      "sample_relevant_keys": [
+        "factors.market_regime_bucket",
+        "factors.market_regime_score",
+        "factors.volatility_regime_bucket",
+        "factors.volatility_regime_score",
+        "outcome.after_fee_and_slippage_return_pct",
+        "outcome.estimated_slippage_bps",
+        "outcome.extra_slippage_penalty_pct",
+        "outcome.factors.market_regime_bucket",
+        "outcome.factors.market_regime_score",
+        "outcome.factors.volatility_regime_bucket",
+        "outcome.factors.volatility_regime_score",
+        "outcome.funding_paid_during_hold",
+        "outcome.funding_paid_source",
+        "outcome.funding_rate_at_entry",
+        "outcome.spread_bps_at_entry"
+      ]
+    },
+    {
+      "playbook": "discovery_bidwall_oi_build_continuation",
+      "sample_relevant_keys": [
+        "factors.market_regime_bucket",
+        "factors.market_regime_score",
+        "factors.volatility_regime_bucket",
+        "factors.volatility_regime_score",
+        "outcome.after_fee_and_slippage_return_pct",
+        "outcome.estimated_slippage_bps",
+        "outcome.extra_slippage_penalty_pct",
+        "outcome.factors.market_regime_bucket",
+        "outcome.factors.market_regime_score",
+        "outcome.factors.volatility_regime_bucket",
+        "outcome.factors.volatility_regime_score",
+        "outcome.funding_paid_during_hold",
+        "outcome.funding_paid_source",
+        "outcome.funding_rate_at_entry",
+        "outcome.spread_bps_at_entry"
+      ]
+    }
+  ],
+  "signals_source": "/opt/phoenix-testnet/signal_lab_runs/vps_forward_shadow_mainnet_active/mainnet_shadow/signal_bridge_shadow_signals.jsonl",
+  "source": "/opt/phoenix-testnet/signal_lab_runs/vps_forward_shadow_mainnet_active/mainnet_shadow/signal_bridge_shadow_outcomes.jsonl",
+  "summary": [
+    {
+      "avg_after_cost_net_bps_outcome": 28.243803233052958,
+      "avg_after_cost_net_bps_unique_signal": 26.821660843121236,
+      "avg_gross_bps_outcome": 36.24380323305296,
+      "bidwall_field_available_signals": 0,
+      "bidwall_persistence_available_signals": 0,
+      "bidwall_present_rate_pct": null,
+      "bidwall_removed_failure_rate_pct": null,
+      "bidwall_removed_signals": 0,
+      "btc_regime_top": [
+        [
+          "unavailable",
+          44
+        ],
+        [
+          "record",
+          7
+        ]
+      ],
+      "can_support_limited_testnet_now": false,
+      "eth_regime_top": [
+        [
+          "unavailable",
+          51
+        ]
+      ],
+      "expected_fee_bps_avg": 8.0,
+      "expected_funding_bps_proxy_avg": 0.0,
+      "expected_net_edge_bps_proxy": 26.821660843121236,
+      "expected_slippage_bps_avg": 42.89690492957747,
+      "expected_spread_bps_avg_entry_only": 5.527856338028169,
+      "expected_total_cost_bps_proxy_avg": 56.42476126760563,
+      "fakeout_rate_pct_proxy": 52.94117647058823,
+      "final_negative_rate_pct": 58.8235294117647,
+      "hmm_regime_top": [
+        [
+          "unavailable",
+          51
+        ]
+      ],
+      "liquidity_buckets": {
+        "large": 18,
+        "major": 7,
+        "mid": 26
+      },
+      "median_after_cost_net_bps_unique_signal": -17.941563007687126,
+      "outcome_rows": 142,
+      "playbook": "shadow_oi_build_breakout_balanced",
+      "sum_after_cost_net_bps_outcome": 4010.62005909352,
+      "top_symbol": "JTOUSDT",
+      "top_symbol_concentration_pct": 11.764705882352942,
+      "unique_signal_count": 51,
+      "unique_symbols": 26,
+      "verdict_reason": "forward shadow only; limited testnet remains blocked until unique signals >=100, after-cost edge stays positive, concentration <=35%, required bidwall/regime/follow-through fields are available, and Auditor confirms gates."
+    },
+    {
+      "avg_after_cost_net_bps_outcome": 12.50515539407223,
+      "avg_after_cost_net_bps_unique_signal": 12.50515539407223,
+      "avg_gross_bps_outcome": 20.50515539407223,
+      "bidwall_field_available_signals": 0,
+      "bidwall_persistence_available_signals": 0,
+      "bidwall_present_rate_pct": null,
+      "bidwall_removed_failure_rate_pct": null,
+      "bidwall_removed_signals": 0,
+      "btc_regime_top": [
+        [
+          "unavailable",
+          17
+        ],
+        [
+          "record",
+          4
+        ]
+      ],
+      "can_support_limited_testnet_now": false,
+      "eth_regime_top": [
+        [
+          "unavailable",
+          21
+        ]
+      ],
+      "expected_fee_bps_avg": 8.0,
+      "expected_funding_bps_proxy_avg": 0.0,
+      "expected_net_edge_bps_proxy": 12.50515539407223,
+      "expected_slippage_bps_avg": 56.33841904761905,
+      "expected_spread_bps_avg_entry_only": 7.158690476190476,
+      "expected_total_cost_bps_proxy_avg": 71.49710952380953,
+      "fakeout_rate_pct_proxy": 57.142857142857146,
+      "final_negative_rate_pct": 57.142857142857146,
+      "hmm_regime_top": [
+        [
+          "unavailable",
+          21
+        ]
+      ],
+      "liquidity_buckets": {
+        "large": 5,
+        "major": 4,
+        "mid": 12
+      },
+      "median_after_cost_net_bps_unique_signal": -138.0,
+      "outcome_rows": 63,
+      "playbook": "shadow_oi_build_breakout_quality",
+      "sum_after_cost_net_bps_outcome": 787.8247898265505,
+      "top_symbol": "JTOUSDT",
+      "top_symbol_concentration_pct": 23.80952380952381,
+      "unique_signal_count": 21,
+      "unique_symbols": 12,
+      "verdict_reason": "forward shadow only; limited testnet remains blocked until unique signals >=100, after-cost edge stays positive, concentration <=35%, required bidwall/regime/follow-through fields are available, and Auditor confirms gates."
+    },
+    {
+      "avg_after_cost_net_bps_outcome": 81.37651214724961,
+      "avg_after_cost_net_bps_unique_signal": 64.16808581876774,
+      "avg_gross_bps_outcome": 89.37651214724961,
+      "bidwall_field_available_signals": 0,
+      "bidwall_persistence_available_signals": 0,
+      "bidwall_present_rate_pct": null,
+      "bidwall_removed_failure_rate_pct": null,
+      "bidwall_removed_signals": 0,
+      "btc_regime_top": [
+        [
+          "unavailable",
+          5
+        ],
+        [
+          "record",
+          2
+        ]
+      ],
+      "can_support_limited_testnet_now": false,
+      "eth_regime_top": [
+        [
+          "unavailable",
+          7
+        ]
+      ],
+      "expected_fee_bps_avg": 8.0,
+      "expected_funding_bps_proxy_avg": 0.0,
+      "expected_net_edge_bps_proxy": 64.16808581876774,
+      "expected_slippage_bps_avg": 25.94589090909091,
+      "expected_spread_bps_avg_entry_only": 4.4771363636363635,
+      "expected_total_cost_bps_proxy_avg": 38.423027272727275,
+      "fakeout_rate_pct_proxy": 14.285714285714286,
+      "final_negative_rate_pct": 28.571428571428573,
+      "hmm_regime_top": [
+        [
+          "unavailable",
+          7
+        ]
+      ],
+      "liquidity_buckets": {
+        "large": 7
+      },
+      "median_after_cost_net_bps_unique_signal": 81.77176669484383,
+      "outcome_rows": 22,
+      "playbook": "discovery_bidwall_oi_build_continuation",
+      "sum_after_cost_net_bps_outcome": 1790.2832672394916,
+      "top_symbol": "TSTUSDT",
+      "top_symbol_concentration_pct": 42.857142857142854,
+      "unique_signal_count": 7,
+      "unique_symbols": 5,
+      "verdict_reason": "forward shadow only; limited testnet remains blocked until unique signals >=100, after-cost edge stays positive, concentration <=35%, required bidwall/regime/follow-through fields are available, and Auditor confirms gates."
+    }
+  ],
+  "targets": [
+    "shadow_oi_build_breakout_balanced",
+    "shadow_oi_build_breakout_quality",
+    "discovery_bidwall_oi_build_continuation"
+  ]
+}

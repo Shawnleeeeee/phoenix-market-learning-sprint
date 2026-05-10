@@ -1,0 +1,8 @@
+playbook,liquidity_bucket,unique_signals,concentration_pct,avg_after_cost_net_bps,median_after_cost_net_bps
+shadow_oi_build_breakout_balanced,mid,26,50.98039215686274,43.65212454548708,-50.22648752399279
+shadow_oi_build_breakout_balanced,large,18,35.294117647058826,0.9152380130426301,-17.981975865442145
+shadow_oi_build_breakout_balanced,major,7,13.72549019607843,30.925025797393072,3.8005092851380566
+shadow_oi_build_breakout_quality,mid,12,57.142857142857146,-18.0,-138.0
+shadow_oi_build_breakout_quality,large,5,23.80952380952381,12.546176501266737,-116.58149687056225
+shadow_oi_build_breakout_quality,major,4,19.047619047619047,103.96934519229579,103.96934519229579
+discovery_bidwall_oi_build_continuation,large,7,100.0,64.16808581876774,81.77176669484383

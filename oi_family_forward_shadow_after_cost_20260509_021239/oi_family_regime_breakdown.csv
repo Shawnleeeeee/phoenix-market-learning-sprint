@@ -1,0 +1,13 @@
+playbook,regime_type,regime_value,unique_signals,concentration_pct
+shadow_oi_build_breakout_balanced,btc,unavailable,44,86.27450980392157
+shadow_oi_build_breakout_balanced,btc,record,7,13.72549019607843
+shadow_oi_build_breakout_balanced,eth,unavailable,51,100.0
+shadow_oi_build_breakout_balanced,hmm,unavailable,51,100.0
+shadow_oi_build_breakout_quality,btc,unavailable,17,80.95238095238095
+shadow_oi_build_breakout_quality,btc,record,4,19.047619047619047
+shadow_oi_build_breakout_quality,eth,unavailable,21,100.0
+shadow_oi_build_breakout_quality,hmm,unavailable,21,100.0
+discovery_bidwall_oi_build_continuation,btc,unavailable,5,71.42857142857143
+discovery_bidwall_oi_build_continuation,btc,record,2,28.571428571428573
+discovery_bidwall_oi_build_continuation,eth,unavailable,7,100.0
+discovery_bidwall_oi_build_continuation,hmm,unavailable,7,100.0

@@ -1,0 +1,53 @@
+[
+  {
+    "playbook": "shadow_oi_build_breakout_balanced",
+    "unique_signal_count": 51,
+    "outcome_rows": 142,
+    "avg_gross_bps": 36.24380323305296,
+    "file_after_cost_net_bps_unique": 26.821660843121236,
+    "fee_bps": 8.0,
+    "spread_bps": 5.527856338028169,
+    "slippage_bps": 42.89690492957747,
+    "funding_bps": 0.0,
+    "full_cost_bps": 56.42476126760563,
+    "expected_net_edge_bps_full_cost_proxy": -20.180958034552674,
+    "fakeout_rate_pct": 52.94117647058823,
+    "top_symbol_concentration_pct": 11.764705882352942,
+    "bidwall_available_signals": 0,
+    "bidwall_removed_failure_rate_pct": null
+  },
+  {
+    "playbook": "shadow_oi_build_breakout_quality",
+    "unique_signal_count": 21,
+    "outcome_rows": 63,
+    "avg_gross_bps": 20.50515539407223,
+    "file_after_cost_net_bps_unique": 12.50515539407223,
+    "fee_bps": 8.0,
+    "spread_bps": 7.158690476190476,
+    "slippage_bps": 56.33841904761905,
+    "funding_bps": 0.0,
+    "full_cost_bps": 71.49710952380953,
+    "expected_net_edge_bps_full_cost_proxy": -50.991954129737294,
+    "fakeout_rate_pct": 57.142857142857146,
+    "top_symbol_concentration_pct": 23.80952380952381,
+    "bidwall_available_signals": 0,
+    "bidwall_removed_failure_rate_pct": null
+  },
+  {
+    "playbook": "discovery_bidwall_oi_build_continuation",
+    "unique_signal_count": 7,
+    "outcome_rows": 22,
+    "avg_gross_bps": 89.37651214724961,
+    "file_after_cost_net_bps_unique": 64.16808581876774,
+    "fee_bps": 8.0,
+    "spread_bps": 4.4771363636363635,
+    "slippage_bps": 25.94589090909091,
+    "funding_bps": 0.0,
+    "full_cost_bps": 38.423027272727275,
+    "expected_net_edge_bps_full_cost_proxy": 50.95348487452234,
+    "fakeout_rate_pct": 14.285714285714286,
+    "top_symbol_concentration_pct": 42.857142857142854,
+    "bidwall_available_signals": 0,
+    "bidwall_removed_failure_rate_pct": null
+  }
+]

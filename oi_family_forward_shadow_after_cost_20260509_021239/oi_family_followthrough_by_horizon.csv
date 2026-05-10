@@ -1,0 +1,13 @@
+playbook,horizon_sec,signals_with_horizon,gross_followthrough_rate_pct,after_cost_positive_rate_pct,avg_gross_bps,avg_after_cost_net_bps
+shadow_oi_build_breakout_balanced,30,0,,,,
+shadow_oi_build_breakout_balanced,60,0,,,,
+shadow_oi_build_breakout_balanced,180,0,,,,
+shadow_oi_build_breakout_balanced,300,0,,,,
+shadow_oi_build_breakout_quality,30,0,,,,
+shadow_oi_build_breakout_quality,60,0,,,,
+shadow_oi_build_breakout_quality,180,0,,,,
+shadow_oi_build_breakout_quality,300,0,,,,
+discovery_bidwall_oi_build_continuation,30,0,,,,
+discovery_bidwall_oi_build_continuation,60,3,100.0,100.0,87.9273979338857,79.9273979338857
+discovery_bidwall_oi_build_continuation,180,5,80.0,60.0,86.57125634541862,78.57125634541862
+discovery_bidwall_oi_build_continuation,300,7,71.42857142857143,71.42857142857143,84.6320998954889,76.6320998954889
