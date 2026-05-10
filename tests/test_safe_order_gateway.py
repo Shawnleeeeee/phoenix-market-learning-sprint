@@ -83,6 +83,27 @@ def valid_intent():
     }
 
 
+def trusted_runtime_snapshot(**system_overrides):
+    snapshot = fresh_snapshot(
+        system_status={
+            "source": "runtime",
+            "snapshot_source": "runtime",
+            "trusted_runtime_snapshot": True,
+            "account_state_source": "signed_account",
+            "position_state_source": "signed_positions",
+            "protective_stop_path_available": True,
+            "protective_stop_capability_source": "verified_code_path:test",
+            "emergency_close_available": True,
+            "emergency_close_capability_source": "verified_code_path:test",
+            "position_state": "known",
+            "stop_protection_status": "healthy",
+            "candidate_state": "known",
+            **system_overrides,
+        }
+    )
+    return snapshot
+
+
 class SafeOrderGatewayTests(unittest.IsolatedAsyncioTestCase):
     async def test_risk_reject_does_not_call_executor_callback(self) -> None:
         calls = []
@@ -189,6 +210,42 @@ class SafeOrderGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls, [])
         self.assertFalse(gateway.approved)
         self.assertIn("auto_confirm_rejected", gateway.blocked_by)
+
+    async def test_testnet_order_requires_trusted_runtime_snapshot_when_flagged(self) -> None:
+        calls = []
+
+        gateway = await submit_order_intent(
+            valid_intent(),
+            fresh_snapshot(),
+            environment={"runtime_mode": "TESTNET_LIVE", "env": "testnet", "require_trusted_runtime_snapshot": True},
+            source="HERMES",
+            dry_run=False,
+            executor_callback=lambda payload: calls.append(payload),
+        )
+
+        self.assertEqual(calls, [])
+        self.assertFalse(gateway.approved)
+        self.assertIn("manual_snapshot_not_allowed_for_testnet_order_mode", gateway.blocked_by)
+        self.assertFalse(gateway.execution_result["order_submitted"])
+
+    async def test_executor_callback_exception_freezes_closed(self) -> None:
+        def broken_executor(_payload):
+            raise RuntimeError("simulated executor failure")
+
+        gateway = await submit_order_intent(
+            valid_intent(),
+            trusted_runtime_snapshot(),
+            environment={"runtime_mode": "TESTNET_LIVE", "env": "testnet", "require_trusted_runtime_snapshot": True},
+            source="HERMES",
+            dry_run=False,
+            executor_callback=broken_executor,
+        )
+
+        self.assertTrue(gateway.approved)
+        self.assertFalse(gateway.execution_result["order_submitted"])
+        self.assertTrue(gateway.execution_result["frozen"])
+        self.assertEqual(gateway.execution_result["freeze_reason"], "executor_callback_exception")
+        self.assertFalse(gateway.execution_result["can_continue"])
 
 
 if __name__ == "__main__":

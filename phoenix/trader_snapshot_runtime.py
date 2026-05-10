@@ -27,6 +27,8 @@ def build_runtime_trader_snapshot(
     max_open_positions: int = 1,
     protective_stop_path_available: bool = False,
     emergency_close_available: bool = False,
+    protective_stop_capability_source: str = "unverified",
+    emergency_close_capability_source: str = "unverified",
 ) -> dict[str, Any]:
     """Build a lightweight Trader Mode snapshot from existing Phoenix runtime files.
 
@@ -69,13 +71,16 @@ def build_runtime_trader_snapshot(
         market_state=market_state,
         engine_snapshot=engine_snapshot,
         candidate_source=candidate_source,
-        account_source="signed_account" if signed_account_state is not None or signed_positions is not None else "runtime_state",
+        account_source="signed_account" if signed_account_state is not None else "runtime_state",
+        position_state_source="signed_positions" if signed_positions is not None else ("runtime_state" if position_state_known else "unknown"),
         stale_after_sec=stale_after_sec,
         candidates=merged_candidates,
         positions=current_positions,
         position_state_known=position_state_known,
         protective_stop_path_available=protective_stop_path_available,
         emergency_close_available=emergency_close_available,
+        protective_stop_capability_source=protective_stop_capability_source,
+        emergency_close_capability_source=emergency_close_capability_source,
     )
     return build_trader_snapshot(
         market_data=market_data,
@@ -286,12 +291,15 @@ def _build_system_status(
     engine_snapshot: dict[str, Any] | None,
     candidate_source: str,
     account_source: str,
+    position_state_source: str,
     stale_after_sec: int,
     candidates: list[dict[str, Any]],
     positions: list[dict[str, Any]],
     position_state_known: bool,
     protective_stop_path_available: bool,
     emergency_close_available: bool,
+    protective_stop_capability_source: str,
+    emergency_close_capability_source: str,
 ) -> dict[str, Any]:
     generated_at = _latest_timestamp(
         _runtime_value(market_stream, "generated_at"),
@@ -303,21 +311,39 @@ def _build_system_status(
     stream_status = str((market_state or {}).get("status") or ("connected" if market_stream else "unavailable")).lower()
     websocket_status = "healthy" if stream_status in {"connected", "running", "healthy"} else "unavailable"
     data_fresh = age is not None and age <= max(1, int(stale_after_sec or 60)) and bool(candidates)
+    trusted = (
+        bool(data_fresh)
+        and account_source == "signed_account"
+        and position_state_source == "signed_positions"
+        and position_state_known
+        and bool(protective_stop_path_available)
+        and bool(emergency_close_available)
+        and _verified_capability_source(protective_stop_capability_source)
+        and _verified_capability_source(emergency_close_capability_source)
+    )
     return {
         "snapshot_time": generated_at or datetime.now(timezone.utc).isoformat(),
         "data_fresh": bool(data_fresh),
         "data_age_sec": age,
         "websocket_status": websocket_status,
         "exchange_status": "healthy" if market_stream else "unavailable",
-        "source": "phoenix_runtime_state",
+        "source": "runtime",
+        "snapshot_source": "runtime",
+        "trusted_runtime_snapshot": trusted,
         "candidate_source": candidate_source,
         "account_source": account_source,
+        "account_state_source": account_source,
+        "position_state_source": position_state_source,
         "stale_after_sec": stale_after_sec,
         "position_state": "known" if position_state_known else "unknown",
         "stop_protection_status": _protection_status(positions),
         "candidate_state": "known" if candidates else "unavailable",
         "protective_stop_path_available": bool(protective_stop_path_available),
         "emergency_close_available": bool(emergency_close_available),
+        "protective_stop_capability_source": protective_stop_capability_source,
+        "emergency_close_capability_source": emergency_close_capability_source,
+        "can_continue": trusted,
+        "freeze_reason": None if trusted else "runtime_snapshot_not_trusted_for_testnet_order",
     }
 
 
@@ -536,3 +562,8 @@ def _protection_status(positions: list[dict[str, Any]]) -> str:
     if statuses <= {"healthy", "initial_stop", "breakeven_only", "breakeven_and_trailing_armed"}:
         return "healthy"
     return "unknown"
+
+
+def _verified_capability_source(value: Any) -> bool:
+    text = str(value or "").strip().lower()
+    return text not in {"", "unverified", "manual", "manual_payload", "mock", "file", "unknown"}

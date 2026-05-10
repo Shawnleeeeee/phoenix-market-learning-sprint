@@ -111,17 +111,32 @@ async def submit_order_intent(
     execution_intent["required_protective_orders"] = risk_result.get("required_protective_orders") or []
     execution_intent["reason_if_not_approved"] = None if approved else risk_result.get("reason")
     if approved and not dry_run and executor_callback is not None:
-        callback_result = executor_callback(execution_intent)
-        if inspect.isawaitable(callback_result):
-            callback_result = await callback_result
+        try:
+            callback_result = executor_callback(execution_intent)
+            if inspect.isawaitable(callback_result):
+                callback_result = await callback_result
+        except Exception as exc:  # noqa: BLE001
+            callback_result = {
+                "order_submitted": False,
+                "mainnet_order_submitted": False,
+                "frozen": True,
+                "can_continue": False,
+                "freeze_reason": "executor_callback_exception",
+                "status": "executor_callback_exception",
+                "error": str(exc),
+            }
+        callback_payload = callback_result if isinstance(callback_result, dict) else {"payload": callback_result}
         execution_result = {
             "created_at": _now_iso(),
-            "order_submitted": True,
-            "mainnet_order_submitted": False,
+            "order_submitted": bool(callback_payload.get("order_submitted", True)),
+            "mainnet_order_submitted": bool(callback_payload.get("mainnet_order_submitted", False)),
             "dry_run": False,
-            "status": "submitted_after_safe_order_gateway",
+            "status": str(callback_payload.get("status") or "submitted_after_safe_order_gateway"),
             "executor_called": True,
-            "payload": callback_result,
+            "frozen": bool(callback_payload.get("frozen", False)),
+            "can_continue": bool(callback_payload.get("can_continue", not bool(callback_payload.get("frozen", False)))),
+            "freeze_reason": callback_payload.get("freeze_reason"),
+            "payload": callback_payload,
         }
     else:
         status = "dry_run_intent_only" if approved and dry_run else "blocked_before_execution"
@@ -230,7 +245,10 @@ async def submit_binance_order_intent(
             "dry_run": True,
             "order_submitted": False,
         }
-    payload_result = (gateway.execution_result or {}).get("payload")
+    execution_result = gateway.execution_result or {}
+    if execution_result.get("frozen") or execution_result.get("order_submitted") is not True:
+        raise RuntimeError(str(execution_result.get("freeze_reason") or execution_result.get("status") or "safe_order_gateway_executor_failed"))
+    payload_result = execution_result.get("payload")
     if not isinstance(payload_result, dict):
         raise RuntimeError("safe_order_gateway approved but executor returned no order payload.")
     return payload_result
@@ -321,7 +339,10 @@ def submit_sync_client_order_intent(
             "dry_run": True,
             "order_submitted": False,
         }
-    payload_result = (gateway.execution_result or {}).get("payload")
+    execution_result = gateway.execution_result or {}
+    if execution_result.get("frozen") or execution_result.get("order_submitted") is not True:
+        raise RuntimeError(str(execution_result.get("freeze_reason") or execution_result.get("status") or "safe_order_gateway_executor_failed"))
+    payload_result = execution_result.get("payload")
     if not isinstance(payload_result, dict):
         raise RuntimeError("safe_order_gateway approved but sync executor returned no order payload.")
     return payload_result
@@ -569,6 +590,7 @@ def _write_replay_log(
     row = {
         "event": "safe_order_gateway_replay",
         "created_at": _now_iso(),
+        **_snapshot_replay_metadata(snapshot),
         "snapshot": snapshot,
         "raw_decision_or_order_intent": _to_plain_dict(raw_intent),
         "validation_result": validation_result,
@@ -580,6 +602,20 @@ def _write_replay_log(
     append_jsonl(directory / "safe_order_gateway_replay.jsonl", row)
     event_name = "safe_order_gateway_approved" if gateway_result.get("approved") else "safe_order_gateway_rejected"
     append_jsonl(directory / "safe_order_gateway_decisions.jsonl", {"event": event_name, **gateway_result})
+
+
+def _snapshot_replay_metadata(snapshot: dict[str, Any]) -> dict[str, Any]:
+    status = snapshot.get("system_status") if isinstance(snapshot, dict) else {}
+    status = status if isinstance(status, dict) else {}
+    return {
+        "snapshot_source": status.get("snapshot_source") or status.get("source"),
+        "trusted_runtime_snapshot": bool(status.get("trusted_runtime_snapshot", False)),
+        "account_state_source": status.get("account_state_source") or status.get("account_source"),
+        "position_state_source": status.get("position_state_source"),
+        "protective_stop_capability_source": status.get("protective_stop_capability_source"),
+        "emergency_close_capability_source": status.get("emergency_close_capability_source"),
+        "freeze_reason": status.get("freeze_reason"),
+    }
 
 
 def _write_audit_log(audit_log_path: str | Path | None, gateway_result: dict[str, Any]) -> None:

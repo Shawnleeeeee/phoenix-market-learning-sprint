@@ -68,6 +68,7 @@ def evaluate_risk(
     trade_sensitive_action = action not in {"NO_TRADE", "STOP_TRADING", "WAIT_FOR_TRIGGER"}
 
     if trade_sensitive_action:
+        _check_trusted_testnet_order_snapshot(system_status, environment, blocked_by)
         _check_snapshot_health(system_status, config, blocked_by)
         _check_state_known(system_status, action, blocked_by)
     if action in OPEN_ACTIONS and not account_risk.get("trading_allowed", False):
@@ -202,6 +203,32 @@ def _check_entry_safety_paths(system_status: dict[str, Any], blocked_by: list[st
         blocked_by.append("protective_stop_path_unavailable")
     if system_status.get("emergency_close_available") is not True:
         blocked_by.append("emergency_close_unavailable")
+
+
+def _check_trusted_testnet_order_snapshot(
+    system_status: dict[str, Any],
+    environment: dict[str, Any],
+    blocked_by: list[str],
+) -> None:
+    runtime_mode = str(environment.get("runtime_mode") or environment.get("PHOENIX_RUNTIME_MODE") or "DRY_RUN").upper()
+    require_trusted = _truthy(environment.get("require_trusted_runtime_snapshot")) or _truthy(
+        environment.get("PHOENIX_REQUIRE_TRUSTED_RUNTIME_SNAPSHOT")
+    )
+    if runtime_mode not in {"TESTNET", "TESTNET_LIVE"} or not require_trusted:
+        return
+    source = _status(system_status.get("snapshot_source") or system_status.get("source"))
+    if source != "runtime":
+        blocked_by.append("manual_snapshot_not_allowed_for_testnet_order_mode")
+    if system_status.get("trusted_runtime_snapshot") is not True:
+        blocked_by.append("untrusted_runtime_snapshot")
+    if _status(system_status.get("account_state_source") or system_status.get("account_source")) != "signed_account":
+        blocked_by.append("missing_account_state")
+    if _status(system_status.get("position_state_source")) != "signed_positions":
+        blocked_by.append("missing_position_state")
+    if not _verified_capability(system_status.get("protective_stop_capability_source")):
+        blocked_by.append("protective_stop_path_unverified")
+    if not _verified_capability(system_status.get("emergency_close_capability_source")):
+        blocked_by.append("emergency_close_unverified")
 
 
 def _check_loss_controls(
@@ -367,6 +394,11 @@ def _truthy(value: Any) -> bool:
     if isinstance(value, bool):
         return value
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _verified_capability(value: Any) -> bool:
+    text = str(value or "").strip().lower()
+    return text not in {"", "unverified", "manual", "manual_payload", "mock", "file", "unknown"}
 
 
 def _parse_datetime(value: Any) -> datetime | None:

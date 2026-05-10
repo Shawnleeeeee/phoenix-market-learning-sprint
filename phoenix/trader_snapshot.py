@@ -51,6 +51,14 @@ def build_trader_snapshot(
         "websocket_error",
         "candidate_source",
         "account_source",
+        "snapshot_source",
+        "trusted_runtime_snapshot",
+        "account_state_source",
+        "position_state_source",
+        "protective_stop_capability_source",
+        "emergency_close_capability_source",
+        "freeze_reason",
+        "can_continue",
     ):
         if key in system_status:
             normalized_status[key] = system_status[key]
