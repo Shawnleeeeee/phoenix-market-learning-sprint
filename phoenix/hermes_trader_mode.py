@@ -1,75 +1,135 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
+import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+from uuid import uuid4
 
+from phoenix.hermes_decision import OPEN_ACTIONS
+from phoenix.hermes_decision_provider import (
+    HermesDecisionProvider,
+    MockHermesDecisionProvider,
+    append_provider_log,
+    no_trade_decision,
+    provider_from_name,
+)
 from phoenix.review_reporter import append_review_log, build_review_report
 from phoenix.risk_governor import RiskGovernorConfig, append_jsonl
-from phoenix.safe_order_gateway import submit_order_intent
+from phoenix.safe_order_gateway import ExecutorCallback, submit_order_intent
+from phoenix.testnet_executor_callback import TestnetExecutorCallback
 from phoenix.trader_snapshot import build_trader_snapshot
+from phoenix.trader_snapshot_runtime import build_runtime_trader_snapshot, fetch_signed_testnet_account_state
+
+SnapshotBuilder = Callable[[], dict[str, Any]]
 
 
 def run_trader_cycle(
     *,
     snapshot_payload: dict[str, Any] | None = None,
     decision_payload: dict[str, Any] | None = None,
+    decision_provider: HermesDecisionProvider | None = None,
+    snapshot_builder: SnapshotBuilder | None = None,
     output_dir: str | Path = "hermes_trader_mode_logs",
     dry_run: bool = True,
     environment: dict[str, Any] | None = None,
     risk_config: RiskGovernorConfig | None = None,
+    executor_callback: ExecutorCallback | None = None,
+    trace_id: str | None = None,
 ) -> dict[str, Any]:
+    return asyncio.run(
+        run_trader_cycle_async(
+            snapshot_payload=snapshot_payload,
+            decision_payload=decision_payload,
+            decision_provider=decision_provider,
+            snapshot_builder=snapshot_builder,
+            output_dir=output_dir,
+            dry_run=dry_run,
+            environment=environment,
+            risk_config=risk_config,
+            executor_callback=executor_callback,
+            trace_id=trace_id,
+        )
+    )
+
+
+async def run_trader_cycle_async(
+    *,
+    snapshot_payload: dict[str, Any] | None = None,
+    decision_payload: dict[str, Any] | None = None,
+    decision_provider: HermesDecisionProvider | None = None,
+    snapshot_builder: SnapshotBuilder | None = None,
+    output_dir: str | Path = "hermes_trader_mode_logs",
+    dry_run: bool = True,
+    environment: dict[str, Any] | None = None,
+    risk_config: RiskGovernorConfig | None = None,
+    executor_callback: ExecutorCallback | None = None,
+    trace_id: str | None = None,
+) -> dict[str, Any]:
+    trace = trace_id or _trace_id()
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
 
-    snapshot = snapshot_payload or build_trader_snapshot(
-        system_status={"data_fresh": False, "exchange_status": "unavailable", "websocket_status": "unavailable"}
-    )
-    decision_payload = decision_payload or _mock_no_trade_decision()
-    environment = {
+    snapshot = snapshot_payload or (snapshot_builder() if snapshot_builder is not None else _unavailable_snapshot())
+    environment_payload = {
         "runtime_mode": "DRY_RUN" if dry_run else "TESTNET_LIVE",
         "env": "testnet",
         **(environment or {}),
     }
+    provider = decision_provider or MockHermesDecisionProvider(decision_payload or no_trade_decision("mock Hermes provider returned no actionable setup"))
+    provider_result = await provider.decide(snapshot)
+    decision = provider_result.decision
+    append_provider_log(output / "hermes_decision_provider.jsonl", provider_result)
+    _append_event(output, "snapshot", trace, {"payload": snapshot})
+    _append_event(output, "hermes_decision_raw", trace, provider_result.to_dict())
+    append_jsonl(output / "snapshot.jsonl", {"trace_id": trace, "event": "snapshot", "payload": snapshot})
 
-    append_jsonl(output / "snapshot.jsonl", {"event": "snapshot", "payload": snapshot})
-    gateway = _run_async_gateway(
-        decision_payload,
+    callback = executor_callback if _should_allow_executor_callback(decision, dry_run=dry_run, callback=executor_callback) else None
+    gateway = await submit_order_intent(
+        decision,
         snapshot,
-        environment,
-        output,
+        environment_payload,
+        "HERMES",
         dry_run=dry_run,
+        executor_callback=callback,
         risk_config=risk_config,
+        log_dir=output,
+        audit_log_path=output / "safe_order_gateway.jsonl",
+        extra_context={"trace_id": trace},
     )
     validation_result = gateway.validation_result
-    append_jsonl(output / "hermes_decision.jsonl", {"event": "hermes_decision", **validation_result})
     risk_result = gateway.risk_governor_result
+    execution_intent = gateway.execution_intent
+    execution_result = gateway.execution_result or _execution_result_placeholder(execution_intent, risk_result)
+    normalized = gateway.normalized_decision or decision
+
+    append_jsonl(output / "hermes_decision.jsonl", {"trace_id": trace, "event": "hermes_decision", **validation_result})
     append_jsonl(
         output / "risk_governor_result.jsonl",
-        {"event": "risk_approved" if gateway.approved else "risk_reject", **risk_result},
+        {"trace_id": trace, "event": "risk_approved" if gateway.approved else "risk_reject", **risk_result},
     )
+    append_jsonl(output / "execution_intent.jsonl", {"trace_id": trace, "event": "execution_intent", **execution_intent})
+    append_jsonl(output / "execution_result.jsonl", {"trace_id": trace, "event": "execution_result", **execution_result})
 
-    execution_intent = gateway.execution_intent
-    append_jsonl(output / "execution_intent.jsonl", {"event": "execution_intent", **execution_intent})
-
-    execution_result = gateway.execution_result or _execution_result_placeholder(execution_intent, risk_result)
-    append_jsonl(output / "execution_result.jsonl", {"event": "execution_result", **execution_result})
-
-    report_type = "PRE_ENTER" if risk_result.get("approved") and execution_intent.get("action") in {"ENTER_LONG", "ENTER_SHORT"} else "RISK_REJECT"
-    report_payload = {
-        **(gateway.normalized_decision or {}),
-        "blocked_by": risk_result.get("blocked_by"),
-        "reason": risk_result.get("reason"),
-    }
-    review = build_review_report(report_type, report_payload)
+    review = build_review_report(_review_type(gateway.approved, normalized, execution_result), _review_payload(normalized, risk_result, snapshot))
     append_review_log(output / "review_report.jsonl", review)
+    _append_event(output, "hermes_decision_validated", trace, validation_result)
+    _append_event(output, "risk_governor_result", trace, risk_result)
+    _append_event(output, "safe_order_gateway_result", trace, gateway.to_dict())
+    _append_event(output, "execution_intent", trace, execution_intent)
+    _append_event(output, "execution_result", trace, execution_result)
+    _append_event(output, "review_report", trace, review.to_dict())
 
     return {
+        "trace_id": trace,
         "snapshot": snapshot,
+        "hermes_provider_result": provider_result.to_dict(),
         "hermes_validation": validation_result,
         "risk_governor_result": risk_result,
+        "safe_order_gateway_result": gateway.to_dict(),
         "execution_intent": execution_intent,
         "execution_result": execution_result,
         "review_report": review.to_dict(),
@@ -77,29 +137,87 @@ def run_trader_cycle(
     }
 
 
-def _run_async_gateway(
-    decision_payload: dict[str, Any],
-    snapshot: dict[str, Any],
-    environment: dict[str, Any],
-    output: Path,
+async def run_trader_trial_async(
     *,
-    dry_run: bool,
-    risk_config: RiskGovernorConfig | None,
-):
-    import asyncio
-
-    return asyncio.run(
-        submit_order_intent(
-            decision_payload,
-            snapshot,
-            environment,
-            "HERMES",
-            dry_run=dry_run,
-            risk_config=risk_config,
-            log_dir=output,
-            audit_log_path=output / "safe_order_gateway.jsonl",
-        )
-    )
+    mode: str = "dry-run",
+    provider: HermesDecisionProvider | None = None,
+    interval_sec: float = 5.0,
+    duration_min: float = 60.0,
+    output_dir: str | Path = "hermes_trader_mode_logs",
+    root: str | Path = ".",
+    max_open_positions: int = 1,
+    leverage: int = 2,
+    quote_allocation_usdt: float | None = None,
+    risk_config: RiskGovernorConfig | None = None,
+) -> dict[str, Any]:
+    normalized_mode = str(mode or "dry-run").strip().lower()
+    if normalized_mode not in {"dry-run", "testnet"}:
+        raise ValueError("mode must be dry-run or testnet")
+    run_id = _run_id()
+    run_dir = Path(output_dir) / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    started = time.monotonic()
+    deadline = started + max(0.0, float(duration_min)) * 60.0
+    cycles: list[dict[str, Any]] = []
+    selected_provider = provider or MockHermesDecisionProvider()
+    try:
+        while True:
+            signed_state = (
+                await fetch_signed_testnet_account_state(environment_name="testnet")
+                if normalized_mode == "testnet"
+                else {"account_state": None, "positions": None}
+            )
+            snapshot = build_runtime_trader_snapshot(
+                root=root,
+                max_candidates=10,
+                max_open_positions=max_open_positions,
+                signed_account_state=signed_state.get("account_state") if isinstance(signed_state, dict) else None,
+                signed_positions=signed_state.get("positions") if isinstance(signed_state, dict) else None,
+                protective_stop_path_available=True,
+                emergency_close_available=True,
+            )
+            callback = None
+            if normalized_mode == "testnet":
+                callback = TestnetExecutorCallback(
+                    snapshot=snapshot,
+                    output_dir=run_dir,
+                    environment_name="testnet",
+                    quote_allocation_usdt=quote_allocation_usdt,
+                    leverage=leverage,
+                )
+            result = await run_trader_cycle_async(
+                snapshot_payload=snapshot,
+                decision_provider=selected_provider,
+                output_dir=run_dir,
+                dry_run=normalized_mode != "testnet",
+                environment={
+                    "runtime_mode": "DRY_RUN" if normalized_mode == "dry-run" else "TESTNET_LIVE",
+                    "env": "testnet",
+                    "PHOENIX_MAINNET_LIVE_ENABLED": "false",
+                    "PHOENIX_LIVE_TRADING_ENABLED": "false",
+                    "PHOENIX_PROMOTION_ALLOWED": "false",
+                },
+                risk_config=risk_config,
+                executor_callback=callback,
+            )
+            cycles.append(_cycle_summary(result))
+            if time.monotonic() >= deadline:
+                break
+            await asyncio.sleep(max(1.0, float(interval_sec)))
+    except KeyboardInterrupt:
+        _append_event(run_dir, "trial_shutdown", _trace_id(), {"reason": "keyboard_interrupt"})
+    summary = {
+        "run_id": run_id,
+        "mode": normalized_mode,
+        "provider": getattr(selected_provider, "name", "unknown"),
+        "cycles": len(cycles),
+        "cycle_summaries": cycles,
+        "output_dir": str(run_dir),
+        "mainnet_live": False,
+        "auto_promotion": False,
+    }
+    append_jsonl(run_dir / "trial_summary.jsonl", {"event": "trial_summary", **summary})
+    return summary
 
 
 def load_json_file(path: str | Path) -> dict[str, Any]:
@@ -107,62 +225,113 @@ def load_json_file(path: str | Path) -> dict[str, Any]:
         return json.load(fh)
 
 
+def load_trial_config(path: str | Path | None) -> dict[str, Any]:
+    if path is None:
+        return {}
+    payload = load_json_file(path)
+    return payload if isinstance(payload, dict) else {}
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run Hermes Trader Mode MVP pipeline without bypassing risk controls.")
+    parser = argparse.ArgumentParser(description="Run Hermes Trader Mode through Phoenix safe_order_gateway.")
     parser.add_argument("--snapshot-file", type=Path)
     parser.add_argument("--decision-file", type=Path)
+    parser.add_argument("--provider", choices=["mock", "file", "http"], default="mock")
+    parser.add_argument("--http-endpoint")
+    parser.add_argument("--http-timeout-sec", type=float, default=10.0)
+    parser.add_argument("--mode", choices=["dry-run", "testnet"], default="dry-run")
+    parser.add_argument("--interval-sec", type=float, default=5.0)
+    parser.add_argument("--duration-min", type=float, default=0.0)
+    parser.add_argument("--max-open-positions", type=int, default=1)
+    parser.add_argument("--leverage", type=int, default=2)
+    parser.add_argument("--quote-allocation", type=float)
     parser.add_argument("--output-dir", type=Path, default=Path("hermes_trader_mode_logs"))
-    parser.add_argument("--dry-run", action="store_true", default=True)
-    parser.add_argument("--testnet", action="store_true", help="Use testnet environment metadata, still no mainnet.")
+    parser.add_argument("--root", type=Path, default=Path("."))
+    parser.add_argument("--config", type=Path)
+    parser.add_argument("--single-cycle", action="store_true")
     args = parser.parse_args(argv)
 
-    snapshot = load_json_file(args.snapshot_file) if args.snapshot_file else None
-    decision = load_json_file(args.decision_file) if args.decision_file else None
-    environment = {"runtime_mode": "TESTNET_LIVE" if args.testnet else "DRY_RUN", "env": "testnet"}
-    result = run_trader_cycle(
-        snapshot_payload=snapshot,
-        decision_payload=decision,
-        output_dir=args.output_dir,
-        dry_run=args.dry_run,
-        environment=environment,
+    config = load_trial_config(args.config)
+    mode = str(config.get("mode") or args.mode)
+    provider = provider_from_name(
+        str(config.get("provider") or args.provider),
+        decision_file=args.decision_file or config.get("decision_file"),
+        http_endpoint=args.http_endpoint or config.get("http_endpoint"),
+        http_timeout_sec=float(config.get("http_timeout_sec") or args.http_timeout_sec),
     )
+    if args.single_cycle or args.snapshot_file or args.decision_file:
+        if args.snapshot_file:
+            snapshot = load_json_file(args.snapshot_file)
+        else:
+            signed_state = (
+                asyncio.run(fetch_signed_testnet_account_state(environment_name="testnet"))
+                if mode == "testnet"
+                else {"account_state": None, "positions": None}
+            )
+            snapshot = build_runtime_trader_snapshot(
+                root=args.root,
+                signed_account_state=signed_state.get("account_state") if isinstance(signed_state, dict) else None,
+                signed_positions=signed_state.get("positions") if isinstance(signed_state, dict) else None,
+                protective_stop_path_available=True,
+                emergency_close_available=True,
+            )
+        decision_payload = load_json_file(args.decision_file) if args.decision_file and args.provider != "file" else None
+        if decision_payload is not None:
+            provider = MockHermesDecisionProvider(decision_payload)
+        callback = None
+        if mode == "testnet":
+            callback = TestnetExecutorCallback(
+                snapshot=snapshot,
+                output_dir=args.output_dir,
+                quote_allocation_usdt=args.quote_allocation,
+                leverage=args.leverage,
+            )
+        result = run_trader_cycle(
+            snapshot_payload=snapshot,
+            decision_provider=provider,
+            output_dir=args.output_dir,
+            dry_run=mode != "testnet",
+            environment={
+                "runtime_mode": "DRY_RUN" if mode == "dry-run" else "TESTNET_LIVE",
+                "env": "testnet",
+                "PHOENIX_MAINNET_LIVE_ENABLED": "false",
+                "PHOENIX_LIVE_TRADING_ENABLED": "false",
+                "PHOENIX_PROMOTION_ALLOWED": "false",
+            },
+            executor_callback=callback,
+        )
+    else:
+        result = asyncio.run(
+            run_trader_trial_async(
+                mode=mode,
+                provider=provider,
+                interval_sec=float(config.get("interval_sec") or args.interval_sec),
+                duration_min=float(config.get("duration_min") or args.duration_min),
+                output_dir=config.get("output_dir") or args.output_dir,
+                root=args.root,
+                max_open_positions=int(config.get("max_open_positions") or args.max_open_positions),
+                leverage=int(config.get("leverage") or args.leverage),
+                quote_allocation_usdt=args.quote_allocation or config.get("quote_allocation_usdt"),
+            )
+        )
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 
 
-def _mock_no_trade_decision() -> dict[str, Any]:
-    return {
-        "action": "NO_TRADE",
-        "symbol": None,
-        "trade_type": "NONE",
-        "confidence": 1.0,
-        "reason": "mock Hermes provider returned no actionable setup",
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "source": "HERMES",
-    }
-
-
-def _build_execution_intent(decision: dict[str, Any] | None, risk_result: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
-    decision = decision or {}
-    approved = bool(risk_result.get("approved", False))
-    return {
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "approved_for_execution": approved,
-        "dry_run": dry_run,
-        "testnet_only": True,
-        "action": decision.get("action"),
-        "symbol": decision.get("symbol"),
-        "side": _side_for_action(decision.get("action")),
-        "reduce_only": bool(decision.get("reduce_only", False)),
-        "entry_price_hint": decision.get("entry_price_hint"),
-        "stop_loss_pct": decision.get("stop_loss_pct"),
-        "stop_loss_price": decision.get("stop_loss_price"),
-        "take_profit_pct": decision.get("take_profit_pct"),
-        "take_profit_price": decision.get("take_profit_price"),
-        "max_holding_time_sec": decision.get("max_holding_time_sec"),
-        "required_protective_orders": risk_result.get("required_protective_orders") or [],
-        "reason_if_not_approved": None if approved else risk_result.get("reason"),
-    }
+def _unavailable_snapshot() -> dict[str, Any]:
+    return build_trader_snapshot(
+        system_status={
+            "data_fresh": False,
+            "exchange_status": "unavailable",
+            "websocket_status": "unavailable",
+            "source": "unavailable",
+            "position_state": "unknown",
+            "stop_protection_status": "unknown",
+            "candidate_state": "unknown",
+            "protective_stop_path_available": False,
+            "emergency_close_available": False,
+        }
+    )
 
 
 def _execution_result_placeholder(execution_intent: dict[str, Any], risk_result: dict[str, Any]) -> dict[str, Any]:
@@ -176,13 +345,76 @@ def _execution_result_placeholder(execution_intent: dict[str, Any], risk_result:
     }
 
 
-def _side_for_action(action: Any) -> str | None:
-    text = str(action or "").upper()
-    if text == "ENTER_LONG":
-        return "BUY"
-    if text == "ENTER_SHORT":
-        return "SELL"
-    return None
+def _should_allow_executor_callback(
+    decision: dict[str, Any],
+    *,
+    dry_run: bool,
+    callback: ExecutorCallback | None,
+) -> bool:
+    if dry_run or callback is None:
+        return False
+    return str(decision.get("action") or "").upper() in OPEN_ACTIONS
+
+
+def _review_type(approved: bool, decision: dict[str, Any], execution_result: dict[str, Any]) -> str:
+    action = str(decision.get("action") or "").upper()
+    if action == "NO_TRADE":
+        return "NO_TRADE"
+    if not approved:
+        return "RISK_REJECT"
+    if action in OPEN_ACTIONS and execution_result.get("order_submitted"):
+        return "OPENED"
+    if action in OPEN_ACTIONS:
+        return "PRE_ENTER"
+    return "POSITION_UPDATE"
+
+
+def _review_payload(decision: dict[str, Any], risk_result: dict[str, Any], snapshot: dict[str, Any]) -> dict[str, Any]:
+    market = snapshot.get("market_regime") or {}
+    return {
+        **decision,
+        "blocked_by": risk_result.get("blocked_by"),
+        "reason": decision.get("reason") or risk_result.get("reason"),
+        "regime": market.get("regime"),
+        "market_regime": market.get("regime"),
+        "risk_status": risk_result.get("reason"),
+    }
+
+
+def _append_event(output: Path, event: str, trace_id: str, payload: dict[str, Any]) -> None:
+    append_jsonl(
+        output / "replay_events.jsonl",
+        {
+            "event": event,
+            "trace_id": trace_id,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            **payload,
+        },
+    )
+
+
+def _cycle_summary(result: dict[str, Any]) -> dict[str, Any]:
+    gateway = result.get("safe_order_gateway_result") or {}
+    execution = result.get("execution_result") or {}
+    provider = result.get("hermes_provider_result") or {}
+    decision = provider.get("decision") if isinstance(provider.get("decision"), dict) else {}
+    return {
+        "trace_id": result.get("trace_id"),
+        "action": decision.get("action"),
+        "symbol": decision.get("symbol"),
+        "approved": gateway.get("approved"),
+        "blocked_by": gateway.get("blocked_by"),
+        "order_submitted": execution.get("order_submitted"),
+        "execution_status": execution.get("status"),
+    }
+
+
+def _trace_id() -> str:
+    return f"htm_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}_{uuid4().hex[:8]}"
+
+
+def _run_id() -> str:
+    return f"hermes_trader_trial_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:6]}"
 
 
 if __name__ == "__main__":

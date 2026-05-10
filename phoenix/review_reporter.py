@@ -26,6 +26,7 @@ class ReviewReport:
 def build_review_report(report_type: str, payload: dict[str, Any]) -> ReviewReport:
     normalized = str(report_type or "").strip().upper()
     builders = {
+        "NO_TRADE": _no_trade,
         "PRE_ENTER": _pre_enter,
         "OPENED": _opened,
         "POSITION_UPDATE": _position_update,
@@ -50,6 +51,21 @@ def append_review_log(path: str | Path, report: ReviewReport) -> None:
         fh.write(json.dumps(report.to_dict(), ensure_ascii=False, sort_keys=True) + "\n")
 
 
+def _no_trade(payload: dict[str, Any]) -> str:
+    return "\n".join(
+        [
+            "【唔交易】",
+            "",
+            f"原因：{payload.get('reason', '暂时无清晰入场条件')}",
+            f"市场状态：{payload.get('regime', payload.get('market_regime', '未知'))}",
+            f"风控状态：{payload.get('risk_status', '未触发开仓')}",
+            "",
+            "状态：",
+            "Phoenix 无落单，只继续观察 testnet / shadow 数据。",
+        ]
+    )
+
+
 def _pre_enter(payload: dict[str, Any]) -> str:
     return "\n".join(
         [
@@ -59,12 +75,15 @@ def _pre_enter(payload: dict[str, Any]) -> str:
             f"方向：{_side_text(payload.get('side') or payload.get('action'))}",
             f"交易类型：{_trade_type(payload.get('trade_type'))}",
             f"信心：{payload.get('confidence', 'n/a')}",
+            f"止损：{payload.get('stop_loss_price') or payload.get('stop_loss_pct') or 'n/a'}",
+            f"止盈：{payload.get('take_profit_price') or payload.get('take_profit_pct') or 'n/a'}",
+            f"最长持仓：{payload.get('max_holding_time_sec', 'n/a')} 秒",
             "",
             "当前判断：",
             str(payload.get("reason") or "暂时未有清晰理由。"),
             "",
             "状态：",
-            "只系准备，未落单；要先过 Risk Governor。",
+            "只系准备动作，真正落单前仍然要过 Risk Governor 同 safe_order_gateway。",
         ]
     )
 
@@ -78,12 +97,9 @@ def _opened(payload: dict[str, Any]) -> str:
             f"方向：{_side_text(payload.get('side'))}",
             f"入场价：{payload.get('entry_price', 'n/a')}",
             f"杠杆：{payload.get('leverage', 'n/a')}x",
+            f"仓位大小：{payload.get('quantity', payload.get('size', 'n/a'))}",
             f"止损价：{payload.get('stop_loss_price', 'n/a')}",
             f"止盈价：{payload.get('take_profit_price', 'n/a')}",
-            f"交易类型：{_trade_type(payload.get('trade_type'))}",
-            "",
-            "当前判断：",
-            str(payload.get("summary") or "市场条件通过，已按 testnet 流程开仓。"),
             "",
             "状态：",
             str(payload.get("protection_status") or "止损保护状态未回报。"),
@@ -99,11 +115,12 @@ def _position_update(payload: dict[str, Any]) -> str:
             f"币种：{payload.get('symbol', 'UNKNOWN')}",
             f"方向：{_side_text(payload.get('side'))}",
             f"当前价：{payload.get('current_price', 'n/a')}",
-            f"浮动盈亏：{payload.get('unrealized_pnl_pct', 'n/a')}%",
+            f"浮盈浮亏：{payload.get('unrealized_pnl_pct', 'n/a')}%",
+            f"实际浮盈亏：{payload.get('unrealized_pnl_usdt', 'n/a')} USDT",
             f"已持仓：{payload.get('time_in_trade_sec', 'n/a')} 秒",
             "",
             "状态：",
-            str(payload.get("status") or "继续观察，未有新动作。"),
+            str(payload.get("status") or "继续观察，暂时无新动作。"),
         ]
     )
 
@@ -115,13 +132,15 @@ def _closed(payload: dict[str, Any]) -> str:
             "",
             f"币种：{payload.get('symbol', 'UNKNOWN')}",
             f"方向：{_side_text(payload.get('side'))}",
+            f"入场价：{payload.get('entry_price', 'n/a')}",
+            f"平仓价：{payload.get('exit_price', 'n/a')}",
             f"收益率：{payload.get('pnl_pct', 'n/a')}%",
             f"实际盈亏：{payload.get('pnl_usdt', 'n/a')} USDT",
             f"持仓时间：{payload.get('holding_time_sec', 'n/a')} 秒",
             f"平仓原因：{payload.get('exit_reason', 'n/a')}",
             "",
             "复盘一句：",
-            str(payload.get("review") or "呢单已经完结，等 Analyst 之后复盘。"),
+            str(payload.get("review") or "单已经结束，之后交俾 Analyst 复盘。"),
         ]
     )
 
@@ -132,6 +151,8 @@ def _risk_alert(payload: dict[str, Any]) -> str:
             "【风险警报】",
             "",
             f"问题：{payload.get('reason', 'unknown')}",
+            f"拦截点：{_join_reasons(payload.get('blocked_by'))}",
+            "",
             "状态：",
             "Phoenix 已经停低呢个动作，未有继续执行。",
         ]
@@ -156,21 +177,26 @@ def _daily_summary(payload: dict[str, Any]) -> str:
 
 def _risk_reject(payload: dict[str, Any]) -> str:
     reasons = payload.get("blocked_by") or payload.get("reasons") or [payload.get("reason", "unknown")]
-    if isinstance(reasons, str):
-        reasons = [reasons]
     return "\n".join(
         [
             "【Risk Governor 拒绝】",
             "",
             f"动作：{payload.get('action', 'UNKNOWN')}",
             f"币种：{payload.get('symbol', 'UNKNOWN')}",
-            "拒绝原因：",
-            "、".join(str(item) for item in reasons if item),
+            f"拒绝原因：{_join_reasons(reasons)}",
             "",
             "状态：",
-            "Hermes 只可以提议，Risk Governor 拒绝后 Phoenix 唔会执行。",
+            "Hermes 只可以提出建议，Risk Governor 拒绝后 Phoenix 唔会执行。",
         ]
     )
+
+
+def _join_reasons(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "、".join(str(item) for item in value if item)
+    return str(value or "unknown")
 
 
 def _side_text(value: Any) -> str:

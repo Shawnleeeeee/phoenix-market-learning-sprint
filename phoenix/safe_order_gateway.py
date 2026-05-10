@@ -540,6 +540,13 @@ def _build_execution_intent(
         "symbol": normalized_decision.get("symbol"),
         "side": _side_for_action(normalized_decision.get("action")),
         "reduce_only": bool(normalized_decision.get("reduce_only", False)),
+        "trace_id": context.get("trace_id"),
+        "entry_price_hint": normalized_decision.get("entry_price_hint"),
+        "stop_loss_pct": normalized_decision.get("stop_loss_pct"),
+        "stop_loss_price": normalized_decision.get("stop_loss_price"),
+        "take_profit_pct": normalized_decision.get("take_profit_pct"),
+        "take_profit_price": normalized_decision.get("take_profit_price"),
+        "max_holding_time_sec": normalized_decision.get("max_holding_time_sec"),
         "required_protective_orders": [],
         "raw_intent": _to_plain_dict(raw_intent),
         "purpose": context.get("purpose"),
@@ -618,6 +625,8 @@ def _is_conditional_endpoint(endpoint: str | None, payload: dict[str, Any]) -> b
 
 
 def _review_type(approved: bool, normalized: dict[str, Any]) -> str:
+    if str(normalized.get("action") or "").upper() == "NO_TRADE":
+        return "NO_TRADE"
     if not approved:
         return "RISK_REJECT"
     if normalized.get("action") in OPEN_ACTIONS:

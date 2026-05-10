@@ -1,0 +1,23 @@
+{
+  "mode": "dry-run",
+  "provider": "mock",
+  "interval_sec": 5,
+  "duration_min": 60,
+  "output_dir": "hermes_trader_mode_logs",
+  "max_open_positions": 1,
+  "leverage": 2,
+  "max_daily_loss_pct": 1.0,
+  "max_loss_per_trade_pct": 0.25,
+  "loss_streak_lock": true,
+  "cooldown_after_loss": true,
+  "direction_lock": true,
+  "stop_loss_required": true,
+  "exit_plan_required": true,
+  "no_averaging_down": true,
+  "no_martingale": true,
+  "isolated_margin_only": true,
+  "mainnet_live": false,
+  "auto_promotion": false,
+  "cleanup": false,
+  "testnet_only": true
+}

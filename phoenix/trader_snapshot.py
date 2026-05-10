@@ -31,18 +31,36 @@ def build_trader_snapshot(
     account_risk = _build_account_risk(account_state, current_positions)
     top_candidates = [_normalize_candidate(item) for item in _top_candidates(candidates, max_candidates=max_candidates)]
 
+    normalized_status = {
+        "snapshot_time": snapshot_time,
+        "data_fresh": bool(data_fresh),
+        "websocket_status": str(system_status.get("websocket_status") or "unavailable"),
+        "exchange_status": str(system_status.get("exchange_status") or "unavailable"),
+        "source": str(system_status.get("source") or "manual_payload"),
+        "testnet_only": True,
+    }
+    for key in (
+        "stale_after_sec",
+        "data_age_sec",
+        "position_state",
+        "stop_protection_status",
+        "candidate_state",
+        "protective_stop_path_available",
+        "emergency_close_available",
+        "exchange_error",
+        "websocket_error",
+        "candidate_source",
+        "account_source",
+    ):
+        if key in system_status:
+            normalized_status[key] = system_status[key]
+
     return {
         "market_regime": market_regime,
         "account_risk": account_risk,
         "current_positions": current_positions,
         "top_candidates": top_candidates,
-        "system_status": {
-            "snapshot_time": snapshot_time,
-            "data_fresh": bool(data_fresh),
-            "websocket_status": str(system_status.get("websocket_status") or "unavailable"),
-            "exchange_status": str(system_status.get("exchange_status") or "unavailable"),
-            "testnet_only": True,
-        },
+        "system_status": normalized_status,
     }
 
 
