@@ -558,6 +558,7 @@ def risk_config_from_trial_config(config: dict[str, Any]) -> RiskGovernorConfig:
         require_invalidation_condition=bool(config.get("invalidation_required") or config.get("invalidation_condition_required") or config.get("stage2_micro_order")),
         require_explicit_quote_allocation=micro_required,
         require_known_market_regime=bool(config.get("require_known_market_regime") or config.get("stage2_micro_order")),
+        require_entry_quality_filter=bool(config.get("entry_quality_filter_required") or config.get("stage2_entry_quality_required")),
         max_quote_allocation_usdt=(float(config.get("max_quote_allocation_usdt") or MAX_STAGE2_QUOTE_ALLOCATION_USDT) if micro_required else None),
     )
 

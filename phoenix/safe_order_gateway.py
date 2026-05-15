@@ -798,6 +798,13 @@ def _classify_reject(blocked_by: list[Any]) -> dict[str, Any]:
             "can_continue": False,
             "freeze_reason": ",".join(sorted(set(hard))),
         }
+    if "policy_gate_reject" in reasons or "CANCELLED_BY_RUNNER_VERSION_MISMATCH" in reasons:
+        return {
+            "result_type": "policy_gate_reject",
+            "frozen": False,
+            "can_continue": True,
+            "freeze_reason": None,
+        }
     if reasons:
         return {
             "result_type": "soft_reject",

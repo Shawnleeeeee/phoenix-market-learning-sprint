@@ -95,6 +95,8 @@ def evaluate_risk(
         _check_entry_quality(decision, candidate, market_regime, environment, config, sanitized, blocked_by, notes)
     _check_position_safety(decision, positions, account_risk, config, blocked_by)
     _check_direction(decision, market_regime, candidate, config, blocked_by, notes, sanitized)
+    if action in OPEN_ACTIONS:
+        _check_stage2_v04_execution_policy(sanitized, environment, blocked_by, notes)
     _check_execution_quality(candidate, action, config, blocked_by)
     _check_stop_protection(decision, action, positions, blocked_by)
 
@@ -406,6 +408,62 @@ def _check_entry_quality(
     if _optional_bool(checked_payload.get("entry_quality_allowed")) is not True:
         existing = checked_payload.get("blocked_by") if isinstance(checked_payload.get("blocked_by"), list) else []
         blocked_by.extend(list(existing) or ["entry_quality_filter_failed"])
+
+
+def _check_stage2_v04_execution_policy(
+    sanitized: dict[str, Any],
+    environment: dict[str, Any],
+    blocked_by: list[str],
+    notes: list[str],
+) -> None:
+    runtime_mode = str(environment.get("runtime_mode") or environment.get("PHOENIX_RUNTIME_MODE") or "DRY_RUN").upper()
+    if runtime_mode != "TESTNET_LIVE" or not _truthy(environment.get("stage2_micro_order")):
+        return
+    expected_policy = str(environment.get("expected_policy_version") or "v0.4")
+    runner_version = str(environment.get("runner_version") or "")
+    policy_version = str(environment.get("policy_version") or "")
+    entry_quality_policy_version = str(environment.get("entry_quality_policy_version") or "")
+    mismatch = (
+        runner_version != "stage2_exploration_v04"
+        or policy_version != expected_policy
+        or entry_quality_policy_version != expected_policy
+    )
+    if mismatch:
+        blocked_by.extend(["policy_gate_reject", "CANCELLED_BY_RUNNER_VERSION_MISMATCH"])
+        sanitized["policy_gate_result"] = "CANCELLED_BY_RUNNER_VERSION_MISMATCH"
+        notes.append(
+            "stage2_policy_version_guard="
+            f"runner_version={runner_version or 'missing'};"
+            f"policy_version={policy_version or 'missing'};"
+            f"entry_quality_policy_version={entry_quality_policy_version or 'missing'};"
+            f"expected_policy_version={expected_policy}"
+        )
+        return
+
+    failures: list[str] = []
+    if _optional_bool(sanitized.get("entry_quality_allowed")) is not True:
+        failures.append("entry_quality_allowed_not_true")
+    if not str(sanitized.get("entry_quality_filter") or "").strip():
+        failures.append("entry_quality_filter_missing")
+    if not str(sanitized.get("entry_quality_reason") or "").strip():
+        failures.append("entry_quality_reason_missing")
+    components = sanitized.get("entry_quality_components")
+    if not isinstance(components, dict) or not components:
+        failures.append("entry_quality_components_missing")
+    if _optional_bool(sanitized.get("no_follow_through_exit_enabled")) is not True:
+        failures.append("no_follow_through_exit_enabled_not_true")
+    if sanitized.get("no_follow_through_exit_sec") is None:
+        failures.append("no_follow_through_exit_sec_missing")
+    if sanitized.get("no_follow_through_min_mfe_pct") is None:
+        failures.append("no_follow_through_min_mfe_pct_missing")
+    if _optional_bool(sanitized.get("direction_regime_allowed")) is not True:
+        failures.append("direction_regime_allowed_not_true")
+    if _optional_bool(sanitized.get("micro_notional_feasible")) is not True:
+        failures.append("micro_notional_feasible_not_true")
+    if failures:
+        blocked_by.extend(["policy_gate_reject", *failures])
+        sanitized["policy_gate_result"] = "policy_gate_reject"
+        notes.append("stage2_v04_execution_policy_reject=" + ",".join(failures))
 
 
 def _check_exchange_filter_feasibility(

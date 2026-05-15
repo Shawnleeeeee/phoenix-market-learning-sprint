@@ -670,6 +670,11 @@ class SafeOrderGatewayTests(unittest.IsolatedAsyncioTestCase):
                 "require_trusted_runtime_snapshot": True,
                 "quote_allocation_usdt": 5.0,
                 "stage2_micro_order": True,
+                "stage2_entry_quality_required": True,
+                "runner_version": "stage2_exploration_v04",
+                "policy_version": "v0.4",
+                "entry_quality_policy_version": "v0.4",
+                "expected_policy_version": "v0.4",
             },
             source="HERMES",
             dry_run=False,
@@ -686,9 +691,10 @@ class SafeOrderGatewayTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(calls, [])
         self.assertFalse(gateway.approved)
-        self.assertEqual(gateway.result_type, "soft_reject")
+        self.assertEqual(gateway.result_type, "policy_gate_reject")
         self.assertIn("exchange_filter_reject", gateway.blocked_by)
         self.assertIn("micro_notional_infeasible", gateway.blocked_by)
+        self.assertIn("micro_notional_feasible_not_true", gateway.blocked_by)
         self.assertFalse(gateway.execution_result["executor_called"])
         self.assertFalse(gateway.execution_result["order_submitted"])
         self.assertFalse(gateway.execution_result["testnet_order_submitted"])

@@ -69,10 +69,10 @@ def residual_stage2_runner_count() -> int:
 
 
 def latency_semantics_probe() -> dict[str, Any]:
-    module_path = ROOT / ".tmp_stage2_exploration_v03.py"
-    spec = importlib.util.spec_from_file_location("stage2_exploration_v03_latency_probe", module_path)
+    module_path = ROOT / ".tmp_stage2_exploration_v04.py"
+    spec = importlib.util.spec_from_file_location("stage2_exploration_v04_latency_probe", module_path)
     if spec is None or spec.loader is None:
-        return {"available": False, "reason": "stage2_exploration_v03_loader_unavailable"}
+        return {"available": False, "reason": "stage2_exploration_v04_loader_unavailable"}
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     candidate_to_decision = module._candidate_ms_between(
@@ -236,6 +236,10 @@ async def main() -> int:
         {
             "runtime_mode": "TESTNET_LIVE",
             "env": "testnet",
+            "runner_version": "stage2_exploration_v04",
+            "policy_version": "v0.4",
+            "entry_quality_policy_version": "v0.4",
+            "expected_policy_version": "v0.4",
             "require_trusted_runtime_snapshot": True,
             "quote_allocation_usdt": 5.0,
             "stage2_micro_order": True,
@@ -261,8 +265,102 @@ async def main() -> int:
         audit_log_path=run_dir / "safe_order_gateway.jsonl",
     )
     gateway_payload = gateway.to_dict()
+
+    async def policy_probe(decision_payload: dict[str, Any], environment_overrides: dict[str, Any]) -> dict[str, Any]:
+        probe_executor_called = False
+
+        async def probe_executor(_payload: dict[str, Any]) -> dict[str, Any]:
+            nonlocal probe_executor_called
+            probe_executor_called = True
+            return {
+                "order_submitted": False,
+                "testnet_order_submitted": False,
+                "mainnet_order_submitted": False,
+                "status": "unexpected_policy_probe_executor",
+            }
+
+        base_environment = {
+            "runtime_mode": "TESTNET_LIVE",
+            "env": "testnet",
+            "runner_version": "stage2_exploration_v04",
+            "policy_version": "v0.4",
+            "entry_quality_policy_version": "v0.4",
+            "expected_policy_version": "v0.4",
+            "require_trusted_runtime_snapshot": True,
+            "quote_allocation_usdt": 5.0,
+            "stage2_micro_order": True,
+            "stage2_entry_quality_required": True,
+            "mainnet_live": False,
+            "PHOENIX_MAINNET_LIVE_ENABLED": "false",
+            "PHOENIX_LIVE_TRADING_ENABLED": "false",
+            "PHOENIX_PROMOTION_ALLOWED": "false",
+        }
+        base_environment.update(environment_overrides)
+        probe = await submit_order_intent(
+            decision_payload,
+            snapshot,
+            base_environment,
+            source="HERMES",
+            dry_run=False,
+            executor_callback=probe_executor,
+            risk_config=RiskGovernorConfig(
+                require_known_market_regime=True,
+                require_take_profit=True,
+                require_max_holding_time=True,
+                require_invalidation_condition=True,
+                require_explicit_quote_allocation=True,
+                require_entry_quality_filter=True,
+                max_quote_allocation_usdt=10.0,
+            ),
+            log_dir=run_dir / "policy_probes",
+            audit_log_path=run_dir / "policy_probes.jsonl",
+        )
+        payload = probe.to_dict()
+        payload["probe_executor_called"] = probe_executor_called
+        return payload
+
+    allowed_decision = {
+        **decision,
+        "action": "ENTER_SHORT",
+        "decision": "ENTER_SHORT",
+        "normalized_decision": "ENTER_SHORT",
+        "symbol": "SOLUSDT",
+        "candidate_symbol": "SOLUSDT",
+        "candidate_direction": "SHORT",
+        "allowed_direction": "SHORT",
+        "direction_regime_allowed": True,
+        "direction_regime_reason": "TREND_DOWN permits SHORT only.",
+        "reason": "Stage 2 v0.4 policy probe: synthetic ENTER_SHORT for no-order guard validation.",
+        "stop_loss_pct": 0.25,
+        "take_profit_pct": 0.45,
+        "max_holding_time_sec": 300,
+        "invalidation_condition": "failed rebound invalidates short",
+        "source": "HERMES",
+        "writer": "Hermes Trader Brain",
+        "entry_quality_filter": "stage2_v0.4_entry_quality",
+        "entry_quality_version": "stage2_v0.4",
+        "entry_quality_checked": True,
+        "entry_quality_allowed": True,
+        "entry_quality_score": 0.92,
+        "entry_quality_min_score": 0.75,
+        "entry_quality_reason": "Entry quality passed for v0.4 testnet exploration.",
+        "entry_quality_components": {"late_chase": False, "total_cost_bps": 5.1},
+        "no_follow_through_exit_enabled": True,
+        "no_follow_through_exit_sec": 120,
+        "no_follow_through_min_mfe_pct": 0.0,
+    }
+    wrong_runner_probe = await policy_probe(
+        allowed_decision,
+        {"runner_version": "stage2_exploration_v03"},
+    )
+    null_entry_quality_probe = await policy_probe(
+        {**allowed_decision, "entry_quality_allowed": None},
+        {},
+    )
     append_jsonl(run_dir / "replay_events.jsonl", {"event": "risk_governor_result", "payload": gateway_payload["risk_governor_result"], "created_at": now_iso()})
     append_jsonl(run_dir / "replay_events.jsonl", {"event": "safe_order_gateway_result", "payload": gateway_payload, "created_at": now_iso()})
+    append_jsonl(run_dir / "replay_events.jsonl", {"event": "wrong_runner_policy_probe", "payload": wrong_runner_probe, "created_at": now_iso()})
+    append_jsonl(run_dir / "replay_events.jsonl", {"event": "null_entry_quality_policy_probe", "payload": null_entry_quality_probe, "created_at": now_iso()})
     append_jsonl(run_dir / "replay_events.jsonl", {"event": "execution_result", "payload": gateway_payload["execution_result"], "created_at": now_iso()})
     append_jsonl(run_dir / "review_report.jsonl", gateway_payload.get("review_report") or {})
     append_jsonl(run_dir / "replay_events.jsonl", {"event": "review_report", "payload": gateway_payload.get("review_report"), "created_at": now_iso()})
@@ -285,6 +383,32 @@ async def main() -> int:
         "entry_quality_components": decision.get("entry_quality_components"),
         "latency_semantics": latency_probe,
         "result_type": gateway.result_type,
+        "wrong_runner_rejected": (
+            wrong_runner_probe.get("result_type") == "policy_gate_reject"
+            and "CANCELLED_BY_RUNNER_VERSION_MISMATCH" in (wrong_runner_probe.get("blocked_by") or [])
+            and wrong_runner_probe.get("probe_executor_called") is False
+            and (wrong_runner_probe.get("execution_result") or {}).get("testnet_order_submitted") is False
+        ),
+        "wrong_runner_probe": {
+            "result_type": wrong_runner_probe.get("result_type"),
+            "blocked_by": wrong_runner_probe.get("blocked_by"),
+            "executor_called": wrong_runner_probe.get("probe_executor_called")
+            or bool((wrong_runner_probe.get("execution_result") or {}).get("executor_called")),
+            "testnet_order_submitted": bool((wrong_runner_probe.get("execution_result") or {}).get("testnet_order_submitted")),
+        },
+        "entry_quality_allowed_null_rejected": (
+            null_entry_quality_probe.get("result_type") == "policy_gate_reject"
+            and "entry_quality_allowed_not_true" in (null_entry_quality_probe.get("blocked_by") or [])
+            and null_entry_quality_probe.get("probe_executor_called") is False
+            and (null_entry_quality_probe.get("execution_result") or {}).get("testnet_order_submitted") is False
+        ),
+        "null_entry_quality_probe": {
+            "result_type": null_entry_quality_probe.get("result_type"),
+            "blocked_by": null_entry_quality_probe.get("blocked_by"),
+            "executor_called": null_entry_quality_probe.get("probe_executor_called")
+            or bool((null_entry_quality_probe.get("execution_result") or {}).get("executor_called")),
+            "testnet_order_submitted": bool((null_entry_quality_probe.get("execution_result") or {}).get("testnet_order_submitted")),
+        },
         "frozen": gateway_payload["execution_result"].get("frozen"),
         "can_continue": gateway_payload["execution_result"].get("can_continue"),
         "executor_called": executor_called or bool(gateway_payload["execution_result"].get("executor_called")),
@@ -309,10 +433,14 @@ async def main() -> int:
         failures.append("ending_state_not_flat")
     if report["bad_wording_count"] != 0:
         failures.append("bad_wording_present")
-    if report["result_type"] != "soft_reject":
-        failures.append("expected_soft_reject")
+    if report["result_type"] not in {"soft_reject", "policy_gate_reject"}:
+        failures.append("expected_no_order_reject")
     if report["entry_quality_allowed"] is not False:
         failures.append("expected_entry_quality_reject")
+    if report["wrong_runner_rejected"] is not True:
+        failures.append("wrong_runner_not_rejected")
+    if report["entry_quality_allowed_null_rejected"] is not True:
+        failures.append("entry_quality_allowed_null_not_rejected")
     if latency_probe.get("available") is not True:
         failures.append("latency_probe_unavailable")
     if latency_probe.get("candidate_to_decision_latency_ms") is not None:
