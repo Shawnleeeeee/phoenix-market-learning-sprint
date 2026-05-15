@@ -144,6 +144,9 @@ class HermesDecisionLoopTests(unittest.TestCase):
         self.assertEqual(decision["entry_quality_filter"], "stage2_v0.4_entry_quality")
         self.assertTrue(decision["entry_quality_allowed"])
         self.assertIn("Entry quality passed", decision["entry_quality_reason"])
+        self.assertTrue(decision["no_follow_through_exit_enabled"])
+        self.assertEqual(decision["no_follow_through_exit_sec"], 120)
+        self.assertEqual(decision["no_follow_through_min_mfe_pct"], 0.0)
 
     def test_calibration_policy_candidate_can_emit_complete_enter_short(self) -> None:
         trace_id = "calibration_enter_short"

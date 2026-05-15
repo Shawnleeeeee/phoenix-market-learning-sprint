@@ -161,6 +161,31 @@ class SafeOrderGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(gateway.execution_result["testnet_order_submitted"])
         self.assertFalse(gateway.execution_result["mainnet_order_submitted"])
 
+    async def test_no_follow_through_exit_fields_are_preserved_in_execution_intent(self) -> None:
+        intent = {
+            **valid_intent(),
+            "no_follow_through_exit_enabled": True,
+            "no_follow_through_exit_sec": 120,
+            "no_follow_through_min_mfe_pct": 0.0,
+        }
+
+        gateway = await submit_order_intent(
+            intent,
+            trusted_runtime_snapshot(),
+            environment={"runtime_mode": "TESTNET_LIVE", "env": "testnet", "require_trusted_runtime_snapshot": True},
+            source="HERMES",
+            dry_run=True,
+            risk_config=RiskGovernorConfig(require_known_market_regime=True),
+        )
+
+        self.assertTrue(gateway.approved)
+        self.assertTrue(gateway.execution_intent["no_follow_through_exit_enabled"])
+        self.assertEqual(gateway.execution_intent["no_follow_through_exit_sec"], 120)
+        self.assertEqual(gateway.execution_intent["no_follow_through_min_mfe_pct"], 0.0)
+        self.assertFalse(gateway.execution_result["executor_called"])
+        self.assertFalse(gateway.execution_result["testnet_order_submitted"])
+        self.assertFalse(gateway.execution_result["mainnet_order_submitted"])
+
     async def test_forced_valid_enter_short_passes_dry_run_without_executor(self) -> None:
         calls = []
         snapshot = trusted_runtime_snapshot()

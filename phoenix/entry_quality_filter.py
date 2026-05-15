@@ -9,12 +9,15 @@ ENTRY_QUALITY_FILTER_NAME = "stage2_v0.4_entry_quality"
 ENTRY_QUALITY_MIN_SCORE = 0.75
 
 OBSERVE_ONLY_SYMBOLS = {"ZECUSDT", "XMRUSDT"}
+PREFERRED_EXECUTION_SYMBOLS = {"BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"}
 LATE_CHASE_1M_PCT = 0.80
 LATE_CHASE_5M_PCT = 1.60
 MAX_TOTAL_COST_BPS = 10.0
 MAX_INVALIDATION_DISTANCE_BPS = 90.0
 MIN_MARKET_ALIGNMENT_PCT = 0.05
 MIN_FOLLOW_THROUGH_PCT = 0.03
+NO_FOLLOW_THROUGH_EXIT_SEC = 120
+NO_FOLLOW_THROUGH_MIN_MFE_PCT = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +31,9 @@ class EntryQualityResult:
     entry_quality_reason: str = ""
     entry_quality_reasons: list[str] = field(default_factory=list)
     entry_quality_components: dict[str, Any] = field(default_factory=dict)
+    no_follow_through_exit_enabled: bool = True
+    no_follow_through_exit_sec: int = NO_FOLLOW_THROUGH_EXIT_SEC
+    no_follow_through_min_mfe_pct: float = NO_FOLLOW_THROUGH_MIN_MFE_PCT
     blocked_by: list[str] = field(default_factory=list)
 
     def to_fields(self) -> dict[str, Any]:
@@ -48,6 +54,9 @@ def entry_quality_fields(result: EntryQualityResult | dict[str, Any] | None) -> 
         "entry_quality_reason",
         "entry_quality_reasons",
         "entry_quality_components",
+        "no_follow_through_exit_enabled",
+        "no_follow_through_exit_sec",
+        "no_follow_through_min_mfe_pct",
     )
     return {key: payload.get(key) for key in keys if key in payload}
 
@@ -69,6 +78,7 @@ def evaluate_entry_quality(
         "candidate_direction": direction,
         "market_regime": str(market_regime.get("regime") or "UNKNOWN").upper(),
     }
+    components["symbol_policy"] = _symbol_policy(symbol)
 
     if symbol in OBSERVE_ONLY_SYMBOLS:
         reasons.append(f"{symbol} is observe-only in v0.4 initial symbol policy.")
@@ -163,6 +173,26 @@ def _late_chase(*, direction: str, move_1m: float | None, move_5m: float | None)
             move_5m is not None and move_5m >= LATE_CHASE_5M_PCT
         )
     return True
+
+
+def _symbol_policy(symbol: str) -> dict[str, Any]:
+    if symbol in OBSERVE_ONLY_SYMBOLS:
+        return {
+            "mode": "observe_only",
+            "execution_priority": "observe_only",
+            "reason": f"{symbol} is downgraded to observation in v0.4 initial symbol policy.",
+        }
+    if symbol in PREFERRED_EXECUTION_SYMBOLS:
+        return {
+            "mode": "execution_candidate",
+            "execution_priority": "preferred",
+            "reason": f"{symbol} is in the v0.4 preferred liquid symbol set.",
+        }
+    return {
+        "mode": "execution_candidate",
+        "execution_priority": "standard",
+        "reason": f"{symbol} may execute only if liquidity, cost, and micro-notional checks pass.",
+    }
 
 
 def _btc_eth_alignment(*, direction: str, market_regime: dict[str, Any]) -> dict[str, Any]:

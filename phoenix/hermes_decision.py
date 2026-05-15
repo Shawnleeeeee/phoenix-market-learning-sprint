@@ -62,6 +62,9 @@ class HermesDecision:
     entry_quality_reason: str | None = None
     entry_quality_reasons: list[str] = field(default_factory=list)
     entry_quality_components: dict[str, Any] = field(default_factory=dict)
+    no_follow_through_exit_enabled: bool | None = None
+    no_follow_through_exit_sec: int | None = None
+    no_follow_through_min_mfe_pct: float | None = None
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "HermesDecision":
@@ -113,6 +116,9 @@ class HermesDecision:
             entry_quality_reason=_optional_text(payload.get("entry_quality_reason")),
             entry_quality_reasons=_optional_text_list(payload.get("entry_quality_reasons")),
             entry_quality_components=_optional_dict(payload.get("entry_quality_components")),
+            no_follow_through_exit_enabled=_optional_bool(payload.get("no_follow_through_exit_enabled")),
+            no_follow_through_exit_sec=_optional_int(payload.get("no_follow_through_exit_sec")),
+            no_follow_through_min_mfe_pct=_optional_float(payload.get("no_follow_through_min_mfe_pct")),
         )
 
     def to_dict(self) -> dict[str, Any]:

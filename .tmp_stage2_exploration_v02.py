@@ -91,6 +91,30 @@ def _ms_between(start: Any, end: Any) -> float | None:
     return round((b - a).total_seconds() * 1000.0, 3)
 
 
+def _candidate_ms_between(start: Any, end: Any) -> float | None:
+    value = _ms_between(start, end)
+    if value is None or value < 0:
+        return None
+    return value
+
+
+def _candidate_latency_reliability(*, candidate_to_decision: float | None, candidate_to_order: float | None) -> dict[str, Any]:
+    unavailable: list[str] = []
+    if candidate_to_decision is None:
+        unavailable.append("candidate_to_decision_latency_ms")
+    if candidate_to_order is None:
+        unavailable.append("candidate_to_order_latency_ms")
+    return {
+        "reliable_latency_fields": ["snapshot_to_decision_latency_ms", "decision_to_gateway_latency_ms"],
+        "unreliable_latency_fields": ["candidate_to_decision_latency_ms", "candidate_to_order_latency_ms"],
+        "candidate_latency_unavailable_fields": unavailable,
+        "candidate_latency_note": (
+            "candidate timestamps can come from feed age or upstream clocks; unavailable means missing, "
+            "unparseable, or negative and is excluded from SLO."
+        ),
+    }
+
+
 def _stats(values: list[float | None]) -> dict[str, Any]:
     clean = sorted(float(item) for item in values if item is not None)
     if not clean:
@@ -665,6 +689,8 @@ def _cycle_report(
     safe_order_gateway_at = gateway.get("created_at")
     executor_called_at = execution.get("created_at") if execution.get("executor_called") else None
     simulated_or_entry_ready_at = submit_times.get("entry_order_submitted_at") or execution.get("created_at")
+    candidate_to_decision_latency_ms = _candidate_ms_between(candidate_generated_at, hermes_decision_written_at)
+    candidate_to_order_latency_ms = _candidate_ms_between(candidate_generated_at, simulated_or_entry_ready_at)
     report = {
         "trace_id": trace_id,
         "cycle_dir": str(cycle_dir),
@@ -684,10 +710,14 @@ def _cycle_report(
         "executor_called_at": executor_called_at,
         "entry_order_submitted_at": submit_times.get("entry_order_submitted_at"),
         "stop_tp_submitted_at": submit_times.get("stop_tp_submitted_at"),
-        "candidate_to_decision_latency_ms": _ms_between(candidate_generated_at, hermes_decision_written_at),
+        "candidate_to_decision_latency_ms": candidate_to_decision_latency_ms,
         "snapshot_to_decision_latency_ms": _ms_between(snapshot_created_at, hermes_decision_written_at),
         "decision_to_gateway_latency_ms": _ms_between(phoenix_decision_read_at, safe_order_gateway_at),
-        "candidate_to_order_latency_ms": _ms_between(candidate_generated_at, simulated_or_entry_ready_at),
+        "candidate_to_order_latency_ms": candidate_to_order_latency_ms,
+        "latency_reliability": _candidate_latency_reliability(
+            candidate_to_decision=candidate_to_decision_latency_ms,
+            candidate_to_order=candidate_to_order_latency_ms,
+        ),
         "provider": provider_result.get("provider"),
         "decision_origin": provider_result.get("decision_origin"),
         "fallback_used": provider_result.get("fallback_used"),
@@ -875,10 +905,19 @@ def _summarize_session(
     best_trade = max(real_trades, key=lambda c: _safe_float(c.get("realized_pnl_usdt")) or 0.0, default=None)
     worst_trade = min(real_trades, key=lambda c: _safe_float(c.get("realized_pnl_usdt")) or 0.0, default=None)
     latency = {
-        "candidate_to_decision_latency_ms": _stats([c.get("candidate_to_decision_latency_ms") for c in cycle_reports]),
         "snapshot_to_decision_latency_ms": _stats([c.get("snapshot_to_decision_latency_ms") for c in cycle_reports]),
         "decision_to_gateway_latency_ms": _stats([c.get("decision_to_gateway_latency_ms") for c in cycle_reports]),
-        "candidate_to_order_latency_ms": _stats([c.get("candidate_to_order_latency_ms") for c in cycle_reports]),
+        "reliable_latency_fields": ["snapshot_to_decision_latency_ms", "decision_to_gateway_latency_ms"],
+        "unreliable_candidate_latency_summary": {
+            "candidate_to_decision_latency_ms": _stats([c.get("candidate_to_decision_latency_ms") for c in cycle_reports]),
+            "candidate_to_order_latency_ms": _stats([c.get("candidate_to_order_latency_ms") for c in cycle_reports]),
+            "unavailable_candidate_to_decision_count": sum(
+                1 for c in cycle_reports if c.get("candidate_to_decision_latency_ms") is None
+            ),
+            "unavailable_candidate_to_order_count": sum(
+                1 for c in cycle_reports if c.get("candidate_to_order_latency_ms") is None
+            ),
+        },
     }
     decision_counts = {
         "NO_TRADE": sum(1 for c in cycle_reports if c.get("hermes_decision") == "NO_TRADE"),

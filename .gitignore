@@ -41,6 +41,7 @@ hermes_logs/
 recovery_exports/
 .codex_backups/
 deploy_backups/
+run_logs/
 phoenix_reports/
 _recovery_metadata/
 phoenix_snapshot.json

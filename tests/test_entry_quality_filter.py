@@ -83,6 +83,10 @@ def test_trend_down_short_allows_continuation_low_cost_near_invalidation():
     assert result.entry_quality_allowed is True
     assert result.entry_quality_score >= result.entry_quality_min_score
     assert result.blocked_by == []
+    assert result.entry_quality_components["symbol_policy"]["execution_priority"] == "preferred"
+    assert result.no_follow_through_exit_enabled is True
+    assert result.no_follow_through_exit_sec == 120
+    assert result.no_follow_through_min_mfe_pct == 0.0
 
 
 def test_fee_slippage_drag_high_rejects():
@@ -104,3 +108,14 @@ def test_entry_quality_weak_rejects_far_from_invalidation_and_no_follow_through(
     assert result.entry_quality_allowed is False
     assert "momentum_follow_through_missing" in result.blocked_by
     assert "entry_far_from_invalidation" in result.blocked_by
+
+
+def test_symbol_policy_downgrades_zec_xmr_to_observation_only():
+    result = evaluate_entry_quality(
+        short_candidate(symbol="ZECUSDT"),
+        trend_down(),
+    )
+
+    assert result.entry_quality_allowed is False
+    assert "entry_quality_symbol_observe_only" in result.blocked_by
+    assert result.entry_quality_components["symbol_policy"]["mode"] == "observe_only"

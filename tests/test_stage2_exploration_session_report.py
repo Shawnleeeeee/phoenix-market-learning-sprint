@@ -313,6 +313,34 @@ def test_v03_cycle_report_marks_negative_candidate_latencies_unavailable_but_kee
     assert "candidate_to_order_latency_ms" in report["latency_reliability"]["candidate_latency_unavailable_fields"]
 
 
+def test_v02_cycle_report_marks_negative_candidate_latencies_unavailable_but_keeps_boundary_latencies(tmp_path):
+    runner = _load_runner_module("v02")
+    session_dir = tmp_path / "session"
+    cycle_dir = session_dir / "cycles" / "cycle_01"
+    snapshot = _snapshot()
+    snapshot["system_status"]["snapshot_time"] = "2026-05-15T10:56:29+00:00"
+    snapshot["top_candidates"][0]["candidate_generated_at"] = "2026-05-15T10:56:40+00:00"
+    result = _cycle_result()
+    result["hermes_provider_result"]["decision"]["created_at"] = "2026-05-15T10:56:30+00:00"
+    result["execution_result"]["created_at"] = "2026-05-15T10:56:33+00:00"
+
+    report = runner._cycle_report(
+        session_dir=session_dir,
+        cycle_dir=cycle_dir,
+        result=result,
+        snapshot=snapshot,
+        gate_samples=[{"passed": True}],
+        ending_state={"positions_count": 0, "open_orders_count": 0, "conditional_orders_count": 0},
+    )
+
+    assert report["candidate_to_decision_latency_ms"] is None
+    assert report["candidate_to_order_latency_ms"] is None
+    assert report["snapshot_to_decision_latency_ms"] == 1000.0
+    assert report["decision_to_gateway_latency_ms"] == 2000.0
+    assert "candidate_to_decision_latency_ms" in report["latency_reliability"]["candidate_latency_unavailable_fields"]
+    assert "candidate_to_order_latency_ms" in report["latency_reliability"]["candidate_latency_unavailable_fields"]
+
+
 def test_v03_bridge_latency_fields_marks_negative_candidate_latencies_unavailable_but_keeps_boundary_latencies(tmp_path):
     runner = _load_runner_module("v03")
     snapshot = _snapshot()

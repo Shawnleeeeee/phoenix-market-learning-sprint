@@ -335,6 +335,9 @@ def _decision_from_contract(payload: dict[str, Any], *, action: str, warnings: l
         "entry_quality_reason",
         "entry_quality_reasons",
         "entry_quality_components",
+        "no_follow_through_exit_enabled",
+        "no_follow_through_exit_sec",
+        "no_follow_through_min_mfe_pct",
     ):
         if key in payload:
             decision[key] = payload.get(key)
