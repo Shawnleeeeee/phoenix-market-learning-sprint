@@ -1,0 +1,31 @@
+{
+  "allowlist": [],
+  "default_status": "shadow_only",
+  "enabled": true,
+  "frozen_strategy_ids": [
+    "explore_reclaim_long",
+    "explore_reject_short",
+    "failed_bounce_short",
+    "flush_reversion_long",
+    "impulse_bounce_short",
+    "impulse_pullback_long",
+    "major_reclaim_long",
+    "micro_reclaim_long",
+    "micro_reject_short",
+    "pressure_breakdown_short",
+    "range_reversion_long",
+    "range_reversion_short",
+    "swing_bounce_short",
+    "swing_pullback_long",
+    "trend_breakout_long",
+    "trend_pullback_long",
+    "volatility_long",
+    "volatility_short"
+  ],
+  "report_outputs": {
+    "blocked_candidate_report": "blocked_candidates.jsonl",
+    "gate_report": "old_strategy_freeze_gate_report.json"
+  },
+  "require_explicit_allowlist": true,
+  "version": "old_strategy_freeze_v1"
+}

@@ -1,0 +1,67 @@
+# Local secrets
+.env
+.env.*
+!.env.example
+vps_secrets*.env
+*secret*.env
+*secrets*.env
+*credential*.env
+*credentials*.env
+*token*
+*apikey*
+*api_key*
+*.private
+*.pem
+*.key
+*.p12
+
+# Python environments and caches
+.venv/
+.venv-*/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.codex_*
+
+# Logs and runtime files
+*.log
+*.pid
+.tmp/
+tmp-*.json
+*.bak
+*.bak*
+*.before
+*.backup
+*.orig
+hermes_logs/
+recovery_exports/
+.codex_backups/
+deploy_backups/
+phoenix_reports/
+_recovery_metadata/
+phoenix_snapshot.json
+hermes_cron_last_round_state.json
+runtime_readiness_watch*.json
+stage2_*_active.json
+*.jsonl
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+*.tar.gz
+*.tar
+*.zip
+*.7z
+*.rar
+MANIFEST.sha256
+*.sha256
+
+# OS metadata
+.DS_Store
+__MACOSX/
+Thumbs.db
